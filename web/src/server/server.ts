@@ -17,6 +17,7 @@ import { PtyManager } from './pty/index.js';
 import { createAuthRoutes } from './routes/auth.js';
 import { createConfigRoutes } from './routes/config.js';
 import { createControlRoutes } from './routes/control.js';
+import { createEventsRouter } from './routes/events.js';
 import { createFileRoutes } from './routes/files.js';
 import { createFilesystemRoutes } from './routes/filesystem.js';
 import { createGitRoutes } from './routes/git.js';
@@ -733,6 +734,50 @@ export async function createApp(): Promise<AppInstance> {
         });
     });
     logger.debug('Connected session exit notifications to PTY manager');
+
+    // Connect command finished notifications
+    ptyManager.on('commandFinished', ({ sessionId, command, exitCode, duration, timestamp }) => {
+      // Determine notification type based on exit code
+      const notificationType = exitCode === 0 ? 'command-finished' : 'command-error';
+      const title = exitCode === 0 ? 'Command Completed' : 'Command Failed';
+      const body =
+        exitCode === 0
+          ? `${command} completed successfully`
+          : `${command} failed with exit code ${exitCode}`;
+
+      // Format duration for display
+      const durationStr =
+        duration > 60000
+          ? `${Math.round(duration / 60000)}m ${Math.round((duration % 60000) / 1000)}s`
+          : `${Math.round(duration / 1000)}s`;
+
+      pushNotificationService
+        .sendNotification({
+          type: notificationType,
+          title,
+          body: `${body} (${durationStr})`,
+          icon: '/apple-touch-icon.png',
+          badge: '/favicon-32.png',
+          tag: `vibetunnel-command-${sessionId}-${Date.now()}`,
+          requireInteraction: false,
+          data: {
+            type: notificationType,
+            sessionId,
+            command,
+            exitCode,
+            duration,
+            timestamp,
+          },
+          actions: [
+            { action: 'view-session', title: 'View Session' },
+            { action: 'dismiss', title: 'Dismiss' },
+          ],
+        })
+        .catch((error) => {
+          logger.error('Failed to send command finished notification:', error);
+        });
+    });
+    logger.debug('Connected command finished notifications to PTY manager');
   }
 
   // Mount authentication routes (no auth required)
@@ -823,6 +868,10 @@ export async function createApp(): Promise<AppInstance> {
     );
     logger.debug('Mounted push notification routes');
   }
+
+  // Mount events router for SSE streaming
+  app.use('/api', createEventsRouter(ptyManager));
+  logger.debug('Mounted events routes');
 
   // Initialize control socket
   try {
