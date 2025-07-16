@@ -22,6 +22,7 @@ import { createFileRoutes } from './routes/files.js';
 import { createFilesystemRoutes } from './routes/filesystem.js';
 import { createGitRoutes } from './routes/git.js';
 import { createLogRoutes } from './routes/logs.js';
+import { createPreferencesRouter } from './routes/preferences.js';
 import { createPushRoutes } from './routes/push.js';
 import { createRemoteRoutes } from './routes/remotes.js';
 import { createRepositoryRoutes } from './routes/repositories.js';
@@ -737,6 +738,21 @@ export async function createApp(): Promise<AppInstance> {
 
     // Connect command finished notifications
     ptyManager.on('commandFinished', ({ sessionId, command, exitCode, duration, timestamp }) => {
+      const isClaudeCommand = command.toLowerCase().includes('claude');
+
+      // Enhanced logging for Claude commands
+      if (isClaudeCommand) {
+        logger.log(
+          chalk.magenta(
+            `📬 Server received Claude commandFinished event: sessionId=${sessionId}, command="${command}", exitCode=${exitCode}, duration=${duration}ms`
+          )
+        );
+      } else {
+        logger.debug(
+          `Server received commandFinished event for session ${sessionId}: "${command}"`
+        );
+      }
+
       // Determine notification type based on exit code
       const notificationType = exitCode === 0 ? 'command-finished' : 'command-error';
       const title = exitCode === 0 ? 'Command Completed' : 'Command Failed';
@@ -750,6 +766,10 @@ export async function createApp(): Promise<AppInstance> {
         duration > 60000
           ? `${Math.round(duration / 60000)}m ${Math.round((duration % 60000) / 1000)}s`
           : `${Math.round(duration / 1000)}s`;
+
+      logger.debug(
+        `Sending push notification: type=${notificationType}, title="${title}", body="${body} (${durationStr})"`
+      );
 
       pushNotificationService
         .sendNotification({
@@ -855,6 +875,10 @@ export async function createApp(): Promise<AppInstance> {
   // Mount control routes
   app.use('/api', createControlRoutes());
   logger.debug('Mounted control routes');
+
+  // Mount preferences routes
+  app.use('/api', createPreferencesRouter());
+  logger.debug('Mounted preferences routes');
 
   // Mount push notification routes
   if (vapidManager) {
