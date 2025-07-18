@@ -308,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency UNUser
                 // Session monitoring starts automatically
                 
                 // Start native notification service
-                notificationService.start()
+                await notificationService.start()
             } else {
                 logger.error("HTTP server failed to start")
                 if let error = serverManager.lastError {
