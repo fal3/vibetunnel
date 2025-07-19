@@ -13,15 +13,16 @@ struct GitRepositoryMonitorRaceConditionTests {
     )
     func concurrentGitHubURLFetches() async throws {
         // Attach test environment information
-        Attachment.record("""
+        Issue.record("""
+        Git Test Environment:
         Git Repository: \(FileManager.default.fileExists(atPath: ".git") ? "Valid" : "Invalid")
         Test Repository Path: /test/repo/path
         Concurrent Operations: 10
         Test Type: Race Condition Prevention
-        """, named: "Git Test Environment")
+        """)
 
         // Attach initial monitor state
-        Attachment.record("Monitor created: \(type(of: GitRepositoryMonitor()))", named: "Initial Monitor State")
+        Issue.record("Initial Monitor State: Monitor created: \(type(of: GitRepositoryMonitor()))")
         let monitor = GitRepositoryMonitor()
         let testRepoPath = "/test/repo/path"
 

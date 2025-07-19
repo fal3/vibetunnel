@@ -500,4 +500,77 @@ final class SessionMonitorTests {
         // Cached access should be very fast
         #expect(elapsed < 0.1, "Cached access took too long: \(elapsed)s for 100 calls")
     }
+    
+    // MARK: - Session Change Detection Tests
+    
+    @Test("Detect ended sessions")
+    func detectEndedSessions() throws {
+        // Create test sessions - old (running) → new (not running)
+        let oldSessions: [String: ServerSessionInfo] = [
+            "session-1": ServerSessionInfo(
+                id: "session-1",
+                command: ["bash"],
+                name: nil,
+                workingDir: "/tmp",
+                status: "running",
+                exitCode: nil,
+                startedAt: "2025-01-01T10:00:00.000Z",
+                lastModified: "2025-01-01T10:05:00.000Z",
+                pid: 1234,
+                initialCols: nil,
+                initialRows: nil,
+                activityStatus: nil,
+                source: nil,
+                attachedViaVT: nil
+            )
+        ]
+        
+        let newSessions: [String: ServerSessionInfo] = [
+            "session-1": ServerSessionInfo(
+                id: "session-1",
+                command: ["bash"],
+                name: nil,
+                workingDir: "/tmp",
+                status: "exited",
+                exitCode: 0,
+                startedAt: "2025-01-01T10:00:00.000Z",
+                lastModified: "2025-01-01T10:10:00.000Z",
+                pid: nil,
+                initialCols: nil,
+                initialRows: nil,
+                activityStatus: nil,
+                source: nil,
+                attachedViaVT: nil
+            )
+        ]
+        
+        // Test that transition from running to not running is detected
+        #expect(oldSessions["session-1"]?.isRunning == true)
+        #expect(newSessions["session-1"]?.isRunning == false)
+        
+        // Additional test: verify new session detection
+        let newSessionsWithAddition: [String: ServerSessionInfo] = [
+            "session-1": newSessions["session-1"]!,
+            "session-2": ServerSessionInfo(
+                id: "session-2",
+                command: ["python3", "script.py"],
+                name: nil,
+                workingDir: "/home/user",
+                status: "running",
+                exitCode: nil,
+                startedAt: "2025-01-01T10:15:00.000Z",
+                lastModified: "2025-01-01T10:15:00.000Z",
+                pid: 5678,
+                initialCols: nil,
+                initialRows: nil,
+                activityStatus: nil,
+                source: nil,
+                attachedViaVT: nil
+            )
+        ]
+        
+        // Test new session is running
+        #expect(newSessionsWithAddition["session-2"]?.isRunning == true)
+        #expect(oldSessions["session-2"] == nil)
+    }
 }

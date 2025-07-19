@@ -63,6 +63,9 @@ final class SessionMonitor {
     private let serverPort: Int
     private var localAuthToken: String?
     private let logger = Logger(subsystem: "sh.vibetunnel.vibetunnel", category: "SessionMonitor")
+    
+    /// Previous sessions for change detection
+    private var previousSessions: [String: ServerSessionInfo] = [:]
 
     /// Reference to GitRepositoryMonitor for pre-caching
     weak var gitRepositoryMonitor: GitRepositoryMonitor?
@@ -143,6 +146,14 @@ final class SessionMonitor {
                 sessionsDict[session.id] = session
             }
 
+            // Check if notifications are enabled before processing changes
+            if UserDefaults.standard.bool(forKey: "showSessionNotifications") {
+                // Detect session changes for notifications
+                detectSessionChanges(previousSessions: self.previousSessions, currentSessions: sessionsDict)
+            }
+            
+            // Update state
+            self.previousSessions = self.sessions
             self.sessions = sessionsDict
             self.lastError = nil
             self.lastFetch = Date()
@@ -179,6 +190,29 @@ final class SessionMonitor {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.refresh()
+            }
+        }
+    }
+    
+    /// Detect session changes and send notifications
+    private func detectSessionChanges(previousSessions: [String: ServerSessionInfo], currentSessions: [String: ServerSessionInfo]) {
+        // Detect new sessions
+        for (id, currentSession) in currentSessions {
+            if previousSessions[id] == nil && currentSession.isRunning {
+                // New session started
+                let command = currentSession.command.joined(separator: " ")
+                Notifier.show(title: "Session Started", body: command)
+            }
+        }
+        
+        // Detect completed sessions
+        for (id, previousSession) in previousSessions {
+            if let currentSession = currentSessions[id] {
+                // Session exists in both - check if it changed from running to not running
+                if previousSession.isRunning && !currentSession.isRunning {
+                    let command = currentSession.command.joined(separator: " ")
+                    Notifier.show(title: "Session Completed", body: command)
+                }
             }
         }
     }

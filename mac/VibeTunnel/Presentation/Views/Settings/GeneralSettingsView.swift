@@ -6,8 +6,8 @@ import SwiftUI
 struct GeneralSettingsView: View {
     @AppStorage("autostart")
     private var autostart = false
-    @AppStorage("showNotifications")
-    private var showNotifications = true
+    @AppStorage("showSessionNotifications")
+    private var showSessionNotifications = true
     @AppStorage(AppConstants.UserDefaultsKeys.updateChannel)
     private var updateChannelRaw = UpdateChannel.stable.rawValue
     @AppStorage(AppConstants.UserDefaultsKeys.showInDock)
@@ -84,6 +84,14 @@ struct GeneralSettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Toggle("Prevent Sleep When Running", isOn: $preventSleepWhenRunning)
                         Text("Keep your Mac awake while VibeTunnel sessions are active.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    // Session Notifications
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("Show Session Notifications", isOn: $showSessionNotifications)
+                        Text("Display notifications when sessions start or finish.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

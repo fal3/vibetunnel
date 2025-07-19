@@ -24,10 +24,11 @@ final class ServerManagerTests {
     @Test("Starting and stopping Bun server", .tags(.critical, .attachmentTests))
     func serverLifecycle() async throws {
         // Attach system information for debugging
-        Attachment.record(TestUtilities.captureSystemInfo(), named: "System Info")
+        // Note: In Swift Testing, use Issue.record for diagnostic information
+        Issue.record("System Info: \(TestUtilities.captureSystemInfo())")
 
         // Attach initial server state
-        Attachment.record(TestUtilities.captureServerState(manager), named: "Initial Server State")
+        Issue.record("Initial Server State: \(TestUtilities.captureServerState(manager))")
 
         // Start the server
         await manager.start()
@@ -36,26 +37,28 @@ final class ServerManagerTests {
         try await Task.sleep(for: .milliseconds(2_000))
 
         // Attach server state after start attempt
-        Attachment.record(TestUtilities.captureServerState(manager), named: "Post-Start Server State")
+        Issue.record("Post-Start Server State: \(TestUtilities.captureServerState(manager))")
 
         // Handle both scenarios: binary not found vs binary working
         if ServerBinaryAvailableCondition.isAvailable() {
             // In CI with working binary, server should start successfully or fail gracefully
             #expect(manager.isRunning || manager.lastError != nil)
-            Attachment.record("""
+            Issue.record("""
+            Server Status With Binary:
             Binary Available: Server should start or fail gracefully
             Is Running: \(manager.isRunning)
             Server Instance: \(manager.bunServer != nil ? "Present" : "Nil")
             Last Error: \(manager.lastError?.localizedDescription ?? "None")
-            """, named: "Server Status With Binary")
+            """)
         } else {
             // In test environment without binary, server should fail to start
             if let error = manager.lastError as? BunServerError {
                 #expect(error == .binaryNotFound)
-                Attachment.record("""
+                Issue.record("""
+                Server Error Details:
                 Error Type: \(error)
                 Error Description: \(error.localizedDescription)
-                """, named: "Server Error Details")
+                """)
             }
             #expect(!manager.isRunning)
             #expect(manager.bunServer == nil)
@@ -68,7 +71,7 @@ final class ServerManagerTests {
         #expect(!manager.isRunning)
 
         // Attach final state
-        Attachment.record(TestUtilities.captureServerState(manager), named: "Final Server State")
+        Issue.record("Final Server State: \(TestUtilities.captureServerState(manager))")
     }
 
     @Test("Starting server when already running does not create duplicate", .tags(.critical))
@@ -383,24 +386,26 @@ final class ServerManagerTests {
     )
     func serverConfigurationDiagnostics() async throws {
         // Attach test environment
-        Attachment.record("""
+        Issue.record("""
+        Test Configuration:
         Test: Server Configuration Management
         Binary Available: \(ServerBinaryAvailableCondition.isAvailable())
         Environment: \(ProcessInfo.processInfo.environment["CI"] != nil ? "CI" : "Local")
-        """, named: "Test Configuration")
+        """)
 
         // Record initial state
-        Attachment.record(TestUtilities.captureServerState(manager), named: "Initial State")
+        Issue.record("Initial State: \(TestUtilities.captureServerState(manager))")
 
         // Test server configuration without actually starting it
         let originalPort = manager.port
         manager.port = "4567"
 
         // Record configuration change
-        Attachment.record("""
+        Issue.record("""
+        Configuration Change:
         Port changed from \(originalPort) to \(manager.port)
         Bind address: \(manager.bindAddress)
-        """, named: "Configuration Change")
+        """)
 
         #expect(manager.port == "4567")
 
@@ -408,28 +413,30 @@ final class ServerManagerTests {
         manager.port = originalPort
 
         // Record final state
-        Attachment.record(TestUtilities.captureServerState(manager), named: "Final State")
+        Issue.record("Final State: \(TestUtilities.captureServerState(manager))")
     }
 
     @Test("Session model validation with attachments", .tags(.attachmentTests, .sessionManagement))
     func sessionModelValidation() async throws {
         // Attach test info
-        Attachment.record("""
+        Issue.record("""
+        Test Info:
         Test: TunnelSession Model Validation
         Purpose: Verify session creation and state management
-        """, named: "Test Info")
+        """)
 
         // Create test session
         let session = TunnelSession()
 
         // Record session details
-        Attachment.record("""
+        Issue.record("""
+        Session Details:
         Session ID: \(session.id)
         Created At: \(session.createdAt)
         Last Activity: \(session.lastActivity)
         Is Active: \(session.isActive)
         Process ID: \(session.processID?.description ?? "none")
-        """, named: "Session Details")
+        """)
 
         // Validate session properties
         #expect(session.isActive)

@@ -123,20 +123,22 @@ enum TestUtilities {
 
     /// Record standardized test configuration with environment info
     static func recordTestConfiguration(name: String, details: String) {
-        Attachment.record("""
+        // In Swift Testing, use Issue.record for diagnostic information
+        Issue.record("""
         Test: \(name)
         Environment: \(ProcessInfo.processInfo.environment["CI"] != nil ? "CI" : "Local")
         \(details)
-        """, named: "Test Configuration")
+        """)
     }
 
     /// Record process execution details
     static func recordProcessExecution(command: String, arguments: [String], exitStatus: Int32, output: String? = nil) {
-        Attachment.record("""
+        // In Swift Testing, use Issue.record for diagnostic information
+        Issue.record("""
         Command: \(command) \(arguments.joined(separator: " "))
         Exit Status: \(exitStatus)
         Output: \(output ?? "(none)")
         Process Environment: \(ProcessInfo.processInfo.environment["CI"] != nil ? "CI" : "Local")
-        """, named: "Process Execution Details")
+        """)
     }
 }
