@@ -306,7 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @preconcurrency UNUser
                 statusBarController?.updateStatusItemDisplay()
 
                 // Session monitoring starts automatically
-                
+
                 // Start native notification service
                 await notificationService.start()
             } else {
