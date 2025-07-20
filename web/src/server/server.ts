@@ -38,10 +38,12 @@ import { ControlDirWatcher } from './services/control-dir-watcher.js';
 import { HQClient } from './services/hq-client.js';
 import { mdnsService } from './services/mdns-service.js';
 import { PushNotificationService } from './services/push-notification-service.js';
+import { PushNotificationStatusService } from './services/push-notification-status-service.js';
 import { RemoteRegistry } from './services/remote-registry.js';
 import { StreamWatcher } from './services/stream-watcher.js';
 import { TerminalManager } from './services/terminal-manager.js';
 import { closeLogger, createLogger, initLogger, setDebugMode } from './utils/logger.js';
+import { environmentSanitizer, EnvironmentSanitizer } from './utils/environment-sanitizer.js';
 import { VapidManager } from './utils/vapid-manager.js';
 import { getVersionInfo, printVersionBanner } from './version.js';
 import { controlUnixHandler } from './websocket/control-unix-handler.js';
@@ -429,7 +431,8 @@ export async function createApp(): Promise<AppInstance> {
     logger.debug(`Using existing control directory: ${CONTROL_DIR}`);
   }
 
-  // Initialize PTY manager
+  // Initialize PTY manager with fallback support
+  await PtyManager.initialize();
   const ptyManager = new PtyManager(CONTROL_DIR);
   logger.debug('Initialized PTY manager');
 
@@ -1286,6 +1289,15 @@ let serverStarted = false;
 export async function startVibeTunnelServer() {
   // Initialize logger if not already initialized (preserves debug mode from CLI)
   initLogger();
+  
+  // Sanitize environment before starting - CRITICAL FIX
+  environmentSanitizer.sanitize();
+  
+  // Log diagnostic info if debug mode
+  if (process.env.DEBUG === 'true' || process.argv.includes('--debug')) {
+    logger.debug('Environment Diagnostic Report:');
+    logger.debug(EnvironmentSanitizer.getDiagnosticReport());
+  }
 
   // Prevent multiple server instances
   if (serverStarted) {
