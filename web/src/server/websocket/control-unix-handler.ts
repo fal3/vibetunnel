@@ -152,6 +152,7 @@ export class ControlUnixHandler {
   private readonly socketPath: string;
   private handlers = new Map<ControlCategory, MessageHandler>();
   private messageBuffer = Buffer.alloc(0);
+  private currentRepositoryPath: string | null = null;
 
   constructor() {
     // Use control directory from environment or default
@@ -593,6 +594,21 @@ export class ControlUnixHandler {
       this.macSocket?.destroy();
       this.macSocket = null;
     }
+  }
+
+  /**
+   * Get the current repository path
+   */
+  getRepositoryPath(): string | null {
+    // This is a temporary solution. In the future, this should be
+    // dynamically determined or configured.
+    if (this.currentRepositoryPath) {
+      return this.currentRepositoryPath;
+    }
+    // A sensible default for development
+    const repoPath = path.resolve(process.cwd(), '../../');
+    this.currentRepositoryPath = repoPath;
+    return repoPath;
   }
 }
 
