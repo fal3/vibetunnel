@@ -19,8 +19,6 @@ interface MessageHandler {
 }
 
 class TerminalHandler implements MessageHandler {
-  constructor(private controlUnixHandler: ControlUnixHandler) {}
-
   async handleMessage(message: ControlMessage): Promise<ControlMessage> {
     logger.log(`Terminal handler: ${message.action}`);
 
@@ -48,16 +46,10 @@ class TerminalHandler implements MessageHandler {
         // Execute vibetunnel command
         logger.log(`Spawning terminal with args: ${args.join(' ')}`);
 
-        // Set CWD to the web directory to ensure node-pty can be found
-        const repoPath = this.controlUnixHandler.getRepositoryPath();
-        const webPath = repoPath ? path.join(repoPath, 'web') : undefined;
-        logger.log(`Using web path for cwd: ${webPath}`);
-
         // Use spawn to avoid shell injection
         const vt = child_process.spawn('vibetunnel', args, {
           detached: true,
           stdio: 'ignore',
-          cwd: webPath,
         });
 
         vt.unref();
@@ -152,7 +144,6 @@ export class ControlUnixHandler {
   private readonly socketPath: string;
   private handlers = new Map<ControlCategory, MessageHandler>();
   private messageBuffer = Buffer.alloc(0);
-  private currentRepositoryPath: string | null = null;
 
   constructor() {
     // Use control directory from environment or default
@@ -170,7 +161,7 @@ export class ControlUnixHandler {
     this.socketPath = path.join(socketDir, 'control.sock');
 
     // Initialize handlers
-    this.handlers.set('terminal', new TerminalHandler(this));
+    this.handlers.set('terminal', new TerminalHandler());
     this.handlers.set('system', new SystemHandler(this));
   }
 
@@ -594,21 +585,6 @@ export class ControlUnixHandler {
       this.macSocket?.destroy();
       this.macSocket = null;
     }
-  }
-
-  /**
-   * Get the current repository path
-   */
-  getRepositoryPath(): string | null {
-    // This is a temporary solution. In the future, this should be
-    // dynamically determined or configured.
-    if (this.currentRepositoryPath) {
-      return this.currentRepositoryPath;
-    }
-    // A sensible default for development
-    const repoPath = path.resolve(process.cwd(), '../../');
-    this.currentRepositoryPath = repoPath;
-    return repoPath;
   }
 }
 
