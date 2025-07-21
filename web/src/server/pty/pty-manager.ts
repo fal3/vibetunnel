@@ -50,6 +50,7 @@ import {
   MessageType,
   parsePayload,
 } from './socket-protocol.js';
+import { controlUnixHandler } from '../websocket/control-unix-handler.js';
 import {
   type KillControlMessage,
   PtyError,
@@ -557,7 +558,7 @@ export class PtyManager extends EventEmitter {
 
       // Set up Claude turn notification callback
       session.activityDetector.setOnClaudeTurn((sessionId) => {
-        logger.log(`Claude turn detected for session ${sessionId}`);
+        logger.info(`🔔 NOTIFICATION DEBUG: Claude turn detected for session ${sessionId}`);
         this.emit(
           'claudeTurn',
           sessionId,
@@ -2227,6 +2228,7 @@ export class PtyManager extends EventEmitter {
         if (shellPgid) {
           session.shellPgid = shellPgid;
           session.currentForegroundPgid = shellPgid;
+          logger.info(`🔔 NOTIFICATION DEBUG: Starting command tracking for session ${session.id} - shellPgid: ${shellPgid}, polling every ${PROCESS_POLL_INTERVAL_MS}ms`);
           logger.debug(`Session ${session.id}: Shell PGID is ${shellPgid}, starting polling`);
 
           // Start polling for foreground process changes
@@ -2357,6 +2359,7 @@ export class PtyManager extends EventEmitter {
 
       // Add debug logging
       if (currentPgid !== session.currentForegroundPgid) {
+        logger.info(`🔔 NOTIFICATION DEBUG: PGID change detected - sessionId: ${session.id}, from ${session.currentForegroundPgid} to ${currentPgid}, shellPgid: ${session.shellPgid}`);
         logger.debug(
           chalk.yellow(
             `Session ${session.id}: Foreground PGID changed from ${session.currentForegroundPgid} to ${currentPgid}`
@@ -2520,7 +2523,18 @@ export class PtyManager extends EventEmitter {
       timestamp: new Date().toISOString(),
     };
 
+    logger.info(`🔔 NOTIFICATION DEBUG: Emitting commandFinished event - sessionId: ${session.id}, command: "${command}", duration: ${duration}ms, exitCode: ${exitCode}`);
     this.emit('commandFinished', eventData);
+
+    // Send notification to Mac app
+    if (controlUnixHandler.isMacAppConnected()) {
+      const notifTitle = isClaudeCommand ? 'Claude Task Finished' : 'Command Finished';
+      const notifBody = `"${command}" completed in ${Math.round(duration / 1000)}s.`;
+      logger.info(`🔔 NOTIFICATION DEBUG: Sending command notification to Mac - title: "${notifTitle}", body: "${notifBody}"`);
+      controlUnixHandler.sendNotification(notifTitle, notifBody, true);
+    } else {
+      logger.warn('🔔 NOTIFICATION DEBUG: Cannot send command notification - Mac app not connected');
+    }
 
     // Enhanced logging for events
     if (isClaudeCommand) {
