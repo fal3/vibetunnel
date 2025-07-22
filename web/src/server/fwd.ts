@@ -631,6 +631,8 @@ export async function startVibeTunnelForward(args: string[]) {
       // Hook into stdout to detect Claude status
       const originalStdoutWrite = process.stdout.write.bind(process.stdout);
 
+      let isProcessingActivity = false;
+
       // Create a proper override that handles all overloads
       const _stdoutWriteOverride = function (
         this: NodeJS.WriteStream,
@@ -644,16 +646,7 @@ export async function startVibeTunnelForward(args: string[]) {
           encodingOrCallback = undefined;
         }
 
-        // Process output through activity detector
-        if (activityDetector && typeof chunk === 'string') {
-          const { filteredData, activity } = activityDetector.processOutput(chunk);
-
-          // Send status update if detected
-          if (activity.specificStatus) {
-            socketClient.sendStatus(activity.specificStatus.app, activity.specificStatus.status);
-          }
-
-          // Call original with correct arguments
+        if (isProcessingActivity) {
           if (callback) {
             return originalStdoutWrite.call(
               this,
@@ -662,24 +655,53 @@ export async function startVibeTunnelForward(args: string[]) {
               callback
             );
           } else if (encodingOrCallback && typeof encodingOrCallback === 'string') {
-            return originalStdoutWrite.call(this, filteredData, encodingOrCallback);
+            return originalStdoutWrite.call(this, chunk, encodingOrCallback);
           } else {
-            return originalStdoutWrite.call(this, filteredData);
+            return originalStdoutWrite.call(this, chunk);
           }
         }
 
-        // Pass through as-is if not string or no detector
-        if (callback) {
-          return originalStdoutWrite.call(
-            this,
-            chunk,
-            encodingOrCallback as BufferEncoding | undefined,
-            callback
-          );
-        } else if (encodingOrCallback && typeof encodingOrCallback === 'string') {
-          return originalStdoutWrite.call(this, chunk, encodingOrCallback);
-        } else {
-          return originalStdoutWrite.call(this, chunk);
+        isProcessingActivity = true;
+        try {
+          // Process output through activity detector
+          if (activityDetector && typeof chunk === 'string') {
+            const { filteredData, activity } = activityDetector.processOutput(chunk);
+
+            // Send status update if detected
+            if (activity.specificStatus) {
+              socketClient.sendStatus(activity.specificStatus.app, activity.specificStatus.status);
+            }
+
+            // Call original with correct arguments
+            if (callback) {
+              return originalStdoutWrite.call(
+                this,
+                filteredData,
+                encodingOrCallback as BufferEncoding | undefined,
+                callback
+              );
+            } else if (encodingOrCallback && typeof encodingOrCallback === 'string') {
+              return originalStdoutWrite.call(this, filteredData, encodingOrCallback);
+            } else {
+              return originalStdoutWrite.call(this, filteredData);
+            }
+          }
+
+          // Pass through as-is if not string or no detector
+          if (callback) {
+            return originalStdoutWrite.call(
+              this,
+              chunk,
+              encodingOrCallback as BufferEncoding | undefined,
+              callback
+            );
+          } else if (encodingOrCallback && typeof encodingOrCallback === 'string') {
+            return originalStdoutWrite.call(this, chunk, encodingOrCallback);
+          } else {
+            return originalStdoutWrite.call(this, chunk);
+          }
+        } finally {
+          isProcessingActivity = false;
         }
       };
 
