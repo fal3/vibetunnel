@@ -25,6 +25,13 @@ function superDebug(message: string, ...args: unknown[]): void {
 const ANSI_REGEX = /\x1b\[[0-9;]*[a-zA-Z]/g;
 
 /**
+ * Escape special regex characters in a string
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Activity status returned by app-specific parsers
  */
 export interface ActivityStatus {
@@ -75,7 +82,7 @@ export interface AppDetector {
 // Format 4: ✳ Measuring… (120s · ⚒ 671 tokens · esc to interrupt) - with hammer symbol
 // Note: We match ANY non-whitespace character as the indicator since Claude uses many symbols
 const CLAUDE_STATUS_REGEX =
-  /(\S)\s+(\w+)…\s*\((\d+)s(?:\s*·\s*(\S?)\s*([\d.]+)\s*k?\s*tokens\s*·\s*[^)]+to\s+interrupt)?\)/gi;
+  /(\S)\s+([\w\s]+?)…\s*\((\d+)s(?:\s*·\s*(\S?)\s*([\d.]+)\s*k?\s*tokens\s*·\s*[^)]+to\s+interrupt)?\)/gi;
 
 /**
  * Parse Claude-specific status from output
@@ -169,7 +176,10 @@ function parseClaudeStatus(data: string): ActivityStatus | null {
       originalPos + fullMatch.length + 50
     );
     // Look for the status pattern in the middle section
-    const statusPattern = new RegExp(`[^\n]*${indicator}[^\n]*to\\s+interrupt[^\n]*`, 'gi');
+    const statusPattern = new RegExp(
+      `[^\n]*${escapeRegex(indicator)}[^\n]*to\\s+interrupt[^\n]*`,
+      'gi'
+    );
     const cleanedMiddle = middle.replace(statusPattern, '');
     filteredData = before + cleanedMiddle + after;
   }
@@ -228,9 +238,15 @@ export class ActivityDetector {
   private readonly STATUS_TIMEOUT = 10000; // 10 seconds - clear status if not seen
   private readonly MEANINGFUL_OUTPUT_THRESHOLD = 5; // characters
 
-  constructor(command: string[]) {
+  // Track Claude status transitions for turn notifications
+  private hadClaudeStatus = false;
+  private onClaudeTurnCallback?: (sessionId: string) => void;
+  private sessionId?: string;
+
+  constructor(command: string[], sessionId?: string) {
     // Find matching detector for this command
     this.detector = detectors.find((d) => d.detect(command)) || null;
+    this.sessionId = sessionId;
 
     if (this.detector) {
       logger.log(
@@ -271,23 +287,34 @@ export class ActivityDetector {
 
     // Try app-specific detection first
     if (this.detector) {
-      const status = this.detector.parseStatus(data);
-      if (status) {
-        this.currentStatus = status;
-        this.lastStatusTime = Date.now();
-        // Always update activity time for app-specific status
-        this.lastActivityTime = Date.now();
-        return {
-          filteredData: status.filteredData,
-          activity: {
-            isActive: true,
-            lastActivityTime: this.lastActivityTime,
-            specificStatus: {
-              app: this.detector.name,
-              status: status.displayText,
+      try {
+        const status = this.detector.parseStatus(data);
+        if (status) {
+          this.currentStatus = status;
+          this.lastStatusTime = Date.now();
+          // Always update activity time for app-specific status
+          this.lastActivityTime = Date.now();
+
+          // Update Claude status tracking
+          if (this.detector.name === 'claude') {
+            this.hadClaudeStatus = true;
+          }
+
+          return {
+            filteredData: status.filteredData,
+            activity: {
+              isActive: true,
+              lastActivityTime: this.lastActivityTime,
+              specificStatus: {
+                app: this.detector.name,
+                status: status.displayText,
+              },
             },
-          },
-        };
+          };
+        }
+      } catch (error) {
+        logger.error(`Error in ${this.detector.name} status parser:`, error);
+        // Continue with unfiltered data if parsing fails
       }
     }
 
@@ -296,6 +323,13 @@ export class ActivityDetector {
       filteredData: data,
       activity: this.getActivityState(),
     };
+  }
+
+  /**
+   * Set callback for Claude turn notifications
+   */
+  setOnClaudeTurn(callback: (sessionId: string) => void): void {
+    this.onClaudeTurnCallback = callback;
   }
 
   /**
@@ -309,6 +343,15 @@ export class ActivityDetector {
     if (this.currentStatus && now - this.lastStatusTime > this.STATUS_TIMEOUT) {
       logger.debug('Clearing stale status - not seen for', this.STATUS_TIMEOUT, 'ms');
       this.currentStatus = null;
+
+      // Check if this was a Claude status clearing
+      if (this.hadClaudeStatus && this.detector?.name === 'claude') {
+        logger.log("Claude turn detected - status cleared, it's the user's turn");
+        if (this.onClaudeTurnCallback && this.sessionId) {
+          this.onClaudeTurnCallback(this.sessionId);
+        }
+        this.hadClaudeStatus = false;
+      }
     }
 
     // If we have a specific status (like Claude running), always show it

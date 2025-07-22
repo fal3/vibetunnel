@@ -73,3 +73,22 @@ Do NOT use three separate commands (add, commit, push) as this is slow.
 
 ## Best Practices
 - ALWAYS use `Z_INDEX` constants in `src/client/utils/constants.ts` instead of setting z-index properties using primitives / magic numbers
+- Add ids to web elements whenever needed to make testing simpler. This helps avoid complex selectors that search by text content or traverse the DOM
+  - Use descriptive IDs like `session-kill-button`, `show-exited-button`, `file-picker-choose-button`
+  - Prefer ID selectors (`#element-id`) over complex queries in tests
+  - When adding interactive elements (buttons, inputs), always consider adding an ID for testability
+
+## CRITICAL: Package Installation Policy
+**NEVER install packages without explicit user approval!**
+- Do NOT run `pnpm add`, `npm install`, or any package installation commands
+- Do NOT modify `package.json` or `pnpm-lock.yaml` unless explicitly requested
+- Always ask for permission before suggesting new dependencies
+- Understand and work with the existing codebase architecture first
+- This project has custom implementations - don't assume we need standard packages
+
+## CRITICAL: vt Command in package.json
+**IMPORTANT: DO NOT add "vt": "./bin/vt" to the bin section of package.json or package.npm.json!**
+- The vt command must NOT be registered as a global binary in package.json
+- This is because it conflicts with other tools that use 'vt' (there are many)
+- Instead, vt is conditionally installed via postinstall script only if available
+- The postinstall script checks if vt already exists before creating a symlink

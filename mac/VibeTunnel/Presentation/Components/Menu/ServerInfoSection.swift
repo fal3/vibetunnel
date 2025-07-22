@@ -17,6 +17,16 @@ struct ServerInfoHeader: View {
     @Environment(\.colorScheme)
     private var colorScheme
 
+    private var appDisplayName: String {
+        let (debugMode, useDevServer) = AppConstants.getDevelopmentStatus()
+
+        var name = debugMode ? "VibeTunnel Debug" : "VibeTunnel"
+        if useDevServer && serverManager.isRunning {
+            name += " Dev Server"
+        }
+        return name
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Title and status
@@ -26,8 +36,9 @@ struct ServerInfoHeader: View {
                         .resizable()
                         .frame(width: 24, height: 24)
                         .cornerRadius(4)
+                        .padding(.leading, -5) // Align with small icons below
 
-                    Text("VibeTunnel")
+                    Text(appDisplayName)
                         .font(.system(size: 14, weight: .semibold))
                 }
 
@@ -124,7 +135,7 @@ struct ServerAddressRow: View {
                 Text(computedAddress)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(AppColors.Fallback.serverRunning(for: colorScheme))
-                    .underline()
+                    .underline(isHovered)
             })
             .buttonStyle(.plain)
             .pointingHandCursor()
@@ -218,22 +229,25 @@ struct ServerStatusBadge: View {
     var body: some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(isRunning ? AppColors.Fallback.serverRunning(for: colorScheme) : AppColors.Fallback
-                    .destructive(for: colorScheme)
+                .fill(
+                    isRunning ? AppColors.Fallback.serverRunning(for: colorScheme) : AppColors.Fallback
+                        .destructive(for: colorScheme)
                 )
                 .frame(width: 6, height: 6)
             Text(isRunning ? "Running" : "Stopped")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(isRunning ? AppColors.Fallback.serverRunning(for: colorScheme) : AppColors.Fallback
-                    .destructive(for: colorScheme)
+                .foregroundColor(
+                    isRunning ? AppColors.Fallback.serverRunning(for: colorScheme) : AppColors.Fallback
+                        .destructive(for: colorScheme)
                 )
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(
             Capsule()
-                .fill(isRunning ? AppColors.Fallback.serverRunning(for: colorScheme).opacity(0.1) : AppColors.Fallback
-                    .destructive(for: colorScheme).opacity(0.1)
+                .fill(
+                    isRunning ? AppColors.Fallback.serverRunning(for: colorScheme).opacity(0.1) : AppColors.Fallback
+                        .destructive(for: colorScheme).opacity(0.1)
                 )
                 .overlay(
                     Capsule()

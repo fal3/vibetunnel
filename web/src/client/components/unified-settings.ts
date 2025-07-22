@@ -1,10 +1,14 @@
 import { html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { DEFAULT_REPOSITORY_BASE_PATH } from '../../shared/constants.js';
+import type { AuthClient } from '../services/auth-client.js';
 import {
   type NotificationPreferences,
   type PushSubscription,
   pushNotificationService,
 } from '../services/push-notification-service.js';
+import { RepositoryService } from '../services/repository-service.js';
+import { ServerConfigService } from '../services/server-config-service.js';
 import { createLogger } from '../utils/logger.js';
 import { type MediaQueryState, responsiveObserver } from '../utils/responsive-utils.js';
 
@@ -12,15 +16,17 @@ const logger = createLogger('unified-settings');
 
 export interface AppPreferences {
   useDirectKeyboard: boolean;
+  useBinaryMode: boolean;
   showLogLink: boolean;
 }
 
 const DEFAULT_APP_PREFERENCES: AppPreferences = {
   useDirectKeyboard: true, // Default to modern direct keyboard for new users
+  useBinaryMode: false, // Default to SSE/RSC mode for compatibility
   showLogLink: false,
 };
 
-const STORAGE_KEY = 'vibetunnel_app_preferences';
+export const STORAGE_KEY = 'vibetunnel_app_preferences';
 
 @customElement('unified-settings')
 export class UnifiedSettings extends LitElement {
@@ -30,6 +36,7 @@ export class UnifiedSettings extends LitElement {
   }
 
   @property({ type: Boolean }) visible = false;
+  @property({ type: Object }) authClient?: AuthClient;
 
   // Notification settings state
   @state() private notificationPreferences: NotificationPreferences = {
@@ -37,6 +44,7 @@ export class UnifiedSettings extends LitElement {
     sessionExit: true,
     sessionStart: false,
     sessionError: true,
+    commandNotifications: true,
     systemAlerts: true,
     soundEnabled: true,
     vibrationEnabled: true,
@@ -49,16 +57,29 @@ export class UnifiedSettings extends LitElement {
 
   // App settings state
   @state() private appPreferences: AppPreferences = DEFAULT_APP_PREFERENCES;
+  @state() private repositoryBasePath = DEFAULT_REPOSITORY_BASE_PATH;
   @state() private mediaState: MediaQueryState = responsiveObserver.getCurrentState();
+  @state() private repositoryCount = 0;
+  @state() private isDiscoveringRepositories = false;
 
   private permissionChangeUnsubscribe?: () => void;
   private subscriptionChangeUnsubscribe?: () => void;
   private unsubscribeResponsive?: () => void;
+  private repositoryService?: RepositoryService;
+  private serverConfigService?: ServerConfigService;
 
   connectedCallback() {
     super.connectedCallback();
     this.initializeNotifications();
     this.loadAppPreferences();
+
+    // Initialize services
+    this.serverConfigService = new ServerConfigService(this.authClient);
+
+    // Initialize repository service if authClient is available
+    if (this.authClient) {
+      this.repositoryService = new RepositoryService(this.authClient, this.serverConfigService);
+    }
 
     // Subscribe to responsive changes
     this.unsubscribeResponsive = responsiveObserver.subscribe((state) => {
@@ -88,8 +109,25 @@ export class UnifiedSettings extends LitElement {
         document.startViewTransition?.(() => {
           this.requestUpdate();
         });
+        // Discover repositories when settings are opened
+        this.discoverRepositories();
       } else {
         document.removeEventListener('keydown', this.handleKeyDown);
+      }
+    }
+
+    // Initialize repository service when authClient becomes available
+    if (changedProperties.has('authClient') && this.authClient) {
+      if (!this.repositoryService && this.serverConfigService) {
+        this.repositoryService = new RepositoryService(this.authClient, this.serverConfigService);
+      }
+      // Update server config service's authClient
+      if (this.serverConfigService) {
+        this.serverConfigService.setAuthClient(this.authClient);
+      }
+      // Discover repositories if settings are already visible
+      if (this.visible) {
+        this.discoverRepositories();
       }
     }
   }
@@ -99,7 +137,7 @@ export class UnifiedSettings extends LitElement {
 
     this.permission = pushNotificationService.getPermission();
     this.subscription = pushNotificationService.getSubscription();
-    this.notificationPreferences = pushNotificationService.loadPreferences();
+    this.notificationPreferences = await pushNotificationService.loadPreferences();
 
     // Listen for changes
     this.permissionChangeUnsubscribe = pushNotificationService.onPermissionChange((permission) => {
@@ -113,11 +151,39 @@ export class UnifiedSettings extends LitElement {
     );
   }
 
-  private loadAppPreferences() {
+  updated(changedProperties: PropertyValues) {
+    super.updated(changedProperties);
+
+    // When dialog becomes visible, refresh the config to ensure sync
+    if (changedProperties.has('visible') && this.visible) {
+      this.loadAppPreferences();
+    }
+  }
+
+  private async loadAppPreferences() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         this.appPreferences = { ...DEFAULT_APP_PREFERENCES, ...JSON.parse(stored) };
+      }
+
+      // Fetch server configuration - force refresh when dialog opens
+      if (this.serverConfigService) {
+        try {
+          const serverConfig = await this.serverConfigService.loadConfig(this.visible);
+          // Always use server's repository base path
+          this.repositoryBasePath = serverConfig.repositoryBasePath || DEFAULT_REPOSITORY_BASE_PATH;
+          logger.debug('Loaded repository base path:', this.repositoryBasePath);
+          // Force update to ensure UI reflects the loaded value
+          this.requestUpdate();
+        } catch (error) {
+          logger.warn('Failed to fetch server config', error);
+        }
+      }
+
+      // Discover repositories after preferences are loaded if visible
+      if (this.visible && this.repositoryService) {
+        this.discoverRepositories();
       }
     } catch (error) {
       logger.error('Failed to load app preferences', error);
@@ -136,6 +202,27 @@ export class UnifiedSettings extends LitElement {
       );
     } catch (error) {
       logger.error('Failed to save app preferences', error);
+    }
+  }
+
+  private async discoverRepositories() {
+    if (!this.repositoryService || this.isDiscoveringRepositories) {
+      return;
+    }
+
+    this.isDiscoveringRepositories = true;
+    try {
+      // Add a small delay to ensure preferences are loaded
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const repositories = await this.repositoryService.discoverRepositories();
+      this.repositoryCount = repositories.length;
+      logger.log(`Discovered ${this.repositoryCount} repositories in ${this.repositoryBasePath}`);
+    } catch (error) {
+      logger.error('Failed to discover repositories', error);
+      this.repositoryCount = 0;
+    } finally {
+      this.isDiscoveringRepositories = false;
     }
   }
 
@@ -164,7 +251,7 @@ export class UnifiedSettings extends LitElement {
         // Disable notifications
         await pushNotificationService.unsubscribe();
         this.notificationPreferences = { ...this.notificationPreferences, enabled: false };
-        pushNotificationService.savePreferences(this.notificationPreferences);
+        await pushNotificationService.savePreferences(this.notificationPreferences);
         this.dispatchEvent(new CustomEvent('notifications-disabled'));
       } else {
         // Enable notifications
@@ -173,7 +260,7 @@ export class UnifiedSettings extends LitElement {
           const subscription = await pushNotificationService.subscribe();
           if (subscription) {
             this.notificationPreferences = { ...this.notificationPreferences, enabled: true };
-            pushNotificationService.savePreferences(this.notificationPreferences);
+            await pushNotificationService.savePreferences(this.notificationPreferences);
             this.dispatchEvent(new CustomEvent('notifications-enabled'));
           } else {
             this.dispatchEvent(
@@ -220,12 +307,30 @@ export class UnifiedSettings extends LitElement {
   ) {
     this.notificationPreferences = { ...this.notificationPreferences, [key]: value };
     this.hasNotificationChanges = true;
-    pushNotificationService.savePreferences(this.notificationPreferences);
+    await pushNotificationService.savePreferences(this.notificationPreferences);
   }
 
-  private handleAppPreferenceChange(key: keyof AppPreferences, value: boolean) {
+  private handleAppPreferenceChange(key: keyof AppPreferences, value: boolean | string) {
+    // Update locally
     this.appPreferences = { ...this.appPreferences, [key]: value };
     this.saveAppPreferences();
+  }
+
+  private async handleRepositoryBasePathChange(value: string) {
+    if (this.serverConfigService) {
+      try {
+        // Update server config
+        await this.serverConfigService.updateConfig({ repositoryBasePath: value });
+        // Update local state
+        this.repositoryBasePath = value;
+        // Rediscover repositories
+        this.discoverRepositories();
+      } catch (error) {
+        logger.error('Failed to update repository base path:', error);
+        // Revert the change on error
+        this.requestUpdate();
+      }
+    }
   }
 
   private get isNotificationsSupported(): boolean {
@@ -233,9 +338,9 @@ export class UnifiedSettings extends LitElement {
   }
 
   private get isNotificationsEnabled(): boolean {
-    return (
-      this.notificationPreferences.enabled && this.permission === 'granted' && !!this.subscription
-    );
+    // Show as enabled if the preference is set, regardless of subscription state
+    // This allows the toggle to properly reflect user intent
+    return this.notificationPreferences.enabled;
   }
 
   private renderSubscriptionStatus() {
@@ -245,21 +350,21 @@ export class UnifiedSettings extends LitElement {
       return html`
         <div class="flex items-center space-x-2">
           <span class="text-status-success font-mono">✓</span>
-          <span class="text-sm text-dark-text">Active</span>
+          <span class="text-sm text-primary">Active</span>
         </div>
       `;
     } else if (this.permission === 'granted') {
       return html`
         <div class="flex items-center space-x-2">
           <span class="text-status-warning font-mono">!</span>
-          <span class="text-sm text-dark-text">Not subscribed</span>
+          <span class="text-sm text-primary">Not subscribed</span>
         </div>
       `;
     } else {
       return html`
         <div class="flex items-center space-x-2">
           <span class="text-status-error font-mono">✗</span>
-          <span class="text-sm text-dark-text">Disabled</span>
+          <span class="text-sm text-primary">Disabled</span>
         </div>
       `;
     }
@@ -289,10 +394,10 @@ export class UnifiedSettings extends LitElement {
           style="view-transition-name: settings-modal"
         >
           <!-- Header -->
-          <div class="p-4 pb-4 border-b border-dark-border relative flex-shrink-0">
-            <h2 class="text-accent-green text-lg font-bold">Settings</h2>
+          <div class="p-4 pb-4 border-b border-border/50 relative flex-shrink-0">
+            <h2 class="text-primary text-lg font-bold">Settings</h2>
             <button
-              class="absolute top-4 right-4 text-dark-text-muted hover:text-dark-text transition-colors p-1"
+              class="absolute top-4 right-4 text-muted hover:text-primary transition-colors p-1"
               @click=${this.handleClose}
               title="Close"
               aria-label="Close settings"
@@ -321,7 +426,7 @@ export class UnifiedSettings extends LitElement {
     return html`
       <div class="space-y-4">
         <div class="flex items-center justify-between mb-3">
-          <h3 class="text-md font-bold text-dark-text">Notifications</h3>
+          <h3 class="text-md font-bold text-primary">Notifications</h3>
           ${this.renderSubscriptionStatus()}
         </div>
         
@@ -349,24 +454,24 @@ export class UnifiedSettings extends LitElement {
             `
             : html`
               <!-- Main toggle -->
-              <div class="flex items-center justify-between p-4 bg-dark-bg-tertiary rounded-lg border border-dark-border">
+              <div class="flex items-center justify-between p-4 bg-tertiary rounded-lg border border-border/50">
                 <div class="flex-1">
-                  <label class="text-dark-text font-medium">Enable Notifications</label>
-                  <p class="text-dark-text-muted text-xs mt-1">
+                  <label class="text-primary font-medium">Enable Notifications</label>
+                  <p class="text-muted text-xs mt-1">
                     Receive alerts for session events
                   </p>
                 </div>
                 <button
                   role="switch"
-                  aria-checked="${this.isNotificationsEnabled}"
+                  aria-checked="${this.notificationPreferences.enabled}"
                   @click=${this.handleToggleNotifications}
                   ?disabled=${this.isLoading}
-                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-accent-green focus:ring-offset-2 focus:ring-offset-dark-bg ${
-                    this.isNotificationsEnabled ? 'bg-accent-green' : 'bg-dark-border'
+                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-base ${
+                    this.isNotificationsEnabled ? 'bg-primary' : 'bg-border'
                   }"
                 >
                   <span
-                    class="inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                    class="inline-block h-5 w-5 transform rounded-full bg-bg-elevated transition-transform ${
                       this.isNotificationsEnabled ? 'translate-x-5' : 'translate-x-0.5'
                     }"
                   ></span>
@@ -379,19 +484,20 @@ export class UnifiedSettings extends LitElement {
                     <!-- Notification types -->
                     <div class="mt-4 space-y-4">
                       <div>
-                        <h4 class="text-sm font-medium text-dark-text-muted mb-3">Notification Types</h4>
-                        <div class="space-y-2 bg-dark-bg rounded-lg p-3">
+                        <h4 class="text-sm font-medium text-muted mb-3">Notification Types</h4>
+                        <div class="space-y-2 bg-base rounded-lg p-3">
                           ${this.renderNotificationToggle('sessionExit', 'Session Exit', 'When a session terminates')}
                           ${this.renderNotificationToggle('sessionStart', 'Session Start', 'When a new session starts')}
                           ${this.renderNotificationToggle('sessionError', 'Session Errors', 'When errors occur in sessions')}
+                          ${this.renderNotificationToggle('commandNotifications', 'Command Completion', 'When long-running commands finish')}
                           ${this.renderNotificationToggle('systemAlerts', 'System Alerts', 'Important system notifications')}
                         </div>
                       </div>
 
                       <!-- Sound and vibration -->
                       <div>
-                        <h4 class="text-sm font-medium text-dark-text-muted mb-3">Notification Behavior</h4>
-                        <div class="space-y-2 bg-dark-bg rounded-lg p-3">
+                        <h4 class="text-sm font-medium text-muted mb-3">Notification Behavior</h4>
+                        <div class="space-y-2 bg-base rounded-lg p-3">
                           ${this.renderNotificationToggle('soundEnabled', 'Sound', 'Play sound with notifications')}
                           ${this.renderNotificationToggle('vibrationEnabled', 'Vibration', 'Vibrate device with notifications')}
                         </div>
@@ -399,8 +505,8 @@ export class UnifiedSettings extends LitElement {
                     </div>
 
                     <!-- Test button -->
-                    <div class="flex items-center justify-between pt-3 mt-3 border-t border-dark-border">
-                      <p class="text-xs text-dark-text-muted">Test your notification settings</p>
+                    <div class="flex items-center justify-between pt-3 mt-3 border-t border-border/50">
+                      <p class="text-xs text-muted">Test your notification settings</p>
                       <button
                         class="btn-secondary text-xs px-3 py-1.5"
                         @click=${this.handleTestNotification}
@@ -427,19 +533,19 @@ export class UnifiedSettings extends LitElement {
     return html`
       <div class="flex items-center justify-between py-2">
         <div class="flex-1 pr-4">
-          <label class="text-dark-text text-sm font-medium">${label}</label>
-          <p class="text-dark-text-muted text-xs">${description}</p>
+          <label class="text-primary text-sm font-medium">${label}</label>
+          <p class="text-muted text-xs">${description}</p>
         </div>
         <button
           role="switch"
           aria-checked="${this.notificationPreferences[key]}"
           @click=${() => this.handleNotificationPreferenceChange(key, !this.notificationPreferences[key])}
-          class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-accent-green focus:ring-offset-2 focus:ring-offset-dark-bg ${
-            this.notificationPreferences[key] ? 'bg-accent-green' : 'bg-dark-border'
+          class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-base ${
+            this.notificationPreferences[key] ? 'bg-primary' : 'bg-border'
           }"
         >
           <span
-            class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+            class="inline-block h-4 w-4 transform rounded-full bg-bg-elevated transition-transform ${
               this.notificationPreferences[key] ? 'translate-x-4' : 'translate-x-0.5'
             }"
           ></span>
@@ -451,18 +557,18 @@ export class UnifiedSettings extends LitElement {
   private renderAppSettings() {
     return html`
       <div class="space-y-4">
-        <h3 class="text-md font-bold text-dark-text mb-3">Application</h3>
+        <h3 class="text-md font-bold text-primary mb-3">Application</h3>
         
         <!-- Direct keyboard input (Mobile only) -->
         ${
           this.mediaState.isMobile
             ? html`
-              <div class="flex items-center justify-between p-4 bg-dark-bg-tertiary rounded-lg border border-dark-border">
+              <div class="flex items-center justify-between p-4 bg-tertiary rounded-lg border border-border/50">
                 <div class="flex-1">
-                  <label class="text-dark-text font-medium">
+                  <label class="text-primary font-medium">
                     Use Direct Keyboard
                   </label>
-                  <p class="text-dark-text-muted text-xs mt-1">
+                  <p class="text-muted text-xs mt-1">
                     Capture keyboard input directly without showing a text field (desktop-like experience)
                   </p>
                 </div>
@@ -470,12 +576,12 @@ export class UnifiedSettings extends LitElement {
                   role="switch"
                   aria-checked="${this.appPreferences.useDirectKeyboard}"
                   @click=${() => this.handleAppPreferenceChange('useDirectKeyboard', !this.appPreferences.useDirectKeyboard)}
-                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-accent-green focus:ring-offset-2 focus:ring-offset-dark-bg ${
-                    this.appPreferences.useDirectKeyboard ? 'bg-accent-green' : 'bg-dark-border'
+                  class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-base ${
+                    this.appPreferences.useDirectKeyboard ? 'bg-primary' : 'bg-border'
                   }"
                 >
                   <span
-                    class="inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                    class="inline-block h-5 w-5 transform rounded-full bg-bg-elevated transition-transform ${
                       this.appPreferences.useDirectKeyboard ? 'translate-x-5' : 'translate-x-0.5'
                     }"
                   ></span>
@@ -486,10 +592,10 @@ export class UnifiedSettings extends LitElement {
         }
 
         <!-- Show log link -->
-        <div class="flex items-center justify-between p-4 bg-dark-bg-tertiary rounded-lg border border-dark-border">
+        <div class="flex items-center justify-between p-4 bg-tertiary rounded-lg border border-border/50">
           <div class="flex-1">
-            <label class="text-dark-text font-medium">Show Log Link</label>
-            <p class="text-dark-text-muted text-xs mt-1">
+            <label class="text-primary font-medium">Show Log Link</label>
+            <p class="text-muted text-xs mt-1">
               Display log link for debugging
             </p>
           </div>
@@ -497,16 +603,58 @@ export class UnifiedSettings extends LitElement {
             role="switch"
             aria-checked="${this.appPreferences.showLogLink}"
             @click=${() => this.handleAppPreferenceChange('showLogLink', !this.appPreferences.showLogLink)}
-            class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-accent-green focus:ring-offset-2 focus:ring-offset-dark-bg ${
-              this.appPreferences.showLogLink ? 'bg-accent-green' : 'bg-dark-border'
+            class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-base ${
+              this.appPreferences.showLogLink ? 'bg-primary' : 'bg-border'
             }"
           >
             <span
-              class="inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+              class="inline-block h-5 w-5 transform rounded-full bg-bg-elevated transition-transform ${
                 this.appPreferences.showLogLink ? 'translate-x-5' : 'translate-x-0.5'
               }"
             ></span>
           </button>
+        </div>
+
+        <!-- Repository Base Path -->
+        <div class="p-4 bg-tertiary rounded-lg border border-border/50">
+          <div class="mb-3">
+            <div class="flex items-center justify-between">
+              <label class="text-primary font-medium">Repository Base Path</label>
+              <div class="flex items-center gap-2">
+                ${
+                  this.isDiscoveringRepositories
+                    ? html`<span id="repository-status" class="text-muted text-xs">Scanning...</span>`
+                    : html`<span id="repository-status" class="text-muted text-xs">${this.repositoryCount} repositories found</span>`
+                }
+                <button
+                  @click=${() => this.discoverRepositories()}
+                  ?disabled=${this.isDiscoveringRepositories}
+                  class="text-primary hover:text-primary-hover text-xs transition-colors duration-200"
+                  title="Refresh repository list"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <p class="text-muted text-xs mt-1">
+              Default directory for new sessions and repository discovery. Changes are automatically synced with the VibeTunnel Mac app.
+            </p>
+          </div>
+          <div class="flex gap-2">
+            <input
+              type="text"
+              .value=${this.repositoryBasePath}
+              @input=${(e: Event) => {
+                const input = e.target as HTMLInputElement;
+                this.handleRepositoryBasePathChange(input.value);
+              }}
+              placeholder="~/"
+              class="input-field py-2 text-sm flex-1"
+            />
+          </div>
         </div>
       </div>
     `;

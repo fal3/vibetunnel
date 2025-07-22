@@ -14,9 +14,12 @@ import { html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { Session } from '../../shared/types.js';
 import type { AuthClient } from '../services/auth-client.js';
+import { sessionActionService } from '../services/session-action-service.js';
 import { isAIAssistantSession, sendAIPrompt } from '../utils/ai-sessions.js';
 import { createLogger } from '../utils/logger.js';
 import { copyToClipboard } from '../utils/path-utils.js';
+import { TerminalPreferencesManager } from '../utils/terminal-preferences.js';
+import type { TerminalThemeId } from '../utils/terminal-themes.js';
 
 const logger = createLogger('session-card');
 import './vibe-terminal-buffer.js';
@@ -57,17 +60,39 @@ export class SessionCard extends LitElement {
 
   @property({ type: Object }) session!: Session;
   @property({ type: Object }) authClient!: AuthClient;
+  @property({ type: Boolean }) selected = false;
   @state() private killing = false;
   @state() private killingFrame = 0;
   @state() private isActive = false;
   @state() private isHovered = false;
   @state() private isSendingPrompt = false;
+  @state() private terminalTheme: TerminalThemeId = 'auto';
 
   private killingInterval: number | null = null;
   private activityTimeout: number | null = null;
+  private storageListener: ((e: StorageEvent) => void) | null = null;
+  private themeChangeListener: ((e: CustomEvent) => void) | null = null;
+  private preferencesManager = TerminalPreferencesManager.getInstance();
 
   connectedCallback() {
     super.connectedCallback();
+
+    // Load initial theme from TerminalPreferencesManager
+    this.loadThemeFromStorage();
+
+    // Listen for storage changes to update theme reactively (cross-tab)
+    this.storageListener = (e: StorageEvent) => {
+      if (e.key === 'vibetunnel_terminal_preferences') {
+        this.loadThemeFromStorage();
+      }
+    };
+    window.addEventListener('storage', this.storageListener);
+
+    // Listen for custom theme change events (same-tab)
+    this.themeChangeListener = (e: CustomEvent) => {
+      this.terminalTheme = e.detail as TerminalThemeId;
+    };
+    window.addEventListener('terminal-theme-changed', this.themeChangeListener as EventListener);
   }
 
   disconnectedCallback() {
@@ -77,6 +102,17 @@ export class SessionCard extends LitElement {
     }
     if (this.activityTimeout) {
       clearTimeout(this.activityTimeout);
+    }
+    if (this.storageListener) {
+      window.removeEventListener('storage', this.storageListener);
+      this.storageListener = null;
+    }
+    if (this.themeChangeListener) {
+      window.removeEventListener(
+        'terminal-theme-changed',
+        this.themeChangeListener as EventListener
+      );
+      this.themeChangeListener = null;
     }
   }
 
@@ -167,66 +203,57 @@ export class SessionCard extends LitElement {
     }
 
     // Send kill or cleanup request based on session status
-    try {
-      // Use different endpoint based on session status
-      const endpoint =
-        this.session.status === 'exited'
-          ? `/api/sessions/${this.session.id}/cleanup`
-          : `/api/sessions/${this.session.id}`;
+    const isExited = this.session.status === 'exited';
 
-      const action = this.session.status === 'exited' ? 'cleanup' : 'kill';
+    const result = await sessionActionService.deleteSession(this.session, {
+      authClient: this.authClient,
+      callbacks: {
+        onError: (errorMessage) => {
+          logger.error('Error killing session', {
+            error: errorMessage,
+            sessionId: this.session.id,
+          });
 
-      const response = await fetch(endpoint, {
-        method: 'DELETE',
-        headers: {
-          ...this.authClient.getAuthHeader(),
+          // Show error to user (keep animation to indicate something went wrong)
+          this.dispatchEvent(
+            new CustomEvent('session-kill-error', {
+              detail: {
+                sessionId: this.session.id,
+                error: errorMessage,
+              },
+              bubbles: true,
+              composed: true,
+            })
+          );
+
+          clearTimeout(killingTimeout);
         },
-      });
+        onSuccess: () => {
+          // Kill/cleanup succeeded - dispatch event to notify parent components
+          this.dispatchEvent(
+            new CustomEvent('session-killed', {
+              detail: {
+                sessionId: this.session.id,
+                session: this.session,
+              },
+              bubbles: true,
+              composed: true,
+            })
+          );
 
-      if (!response.ok) {
-        const errorData = await response.text();
-        logger.error(`Failed to ${action} session`, { errorData, sessionId: this.session.id });
-        throw new Error(`${action} failed: ${response.status}`);
-      }
+          logger.log(
+            `Session ${this.session.id} ${isExited ? 'cleaned up' : 'killed'} successfully`
+          );
+          clearTimeout(killingTimeout);
+        },
+      },
+    });
 
-      // Kill/cleanup succeeded - dispatch event to notify parent components
-      this.dispatchEvent(
-        new CustomEvent('session-killed', {
-          detail: {
-            sessionId: this.session.id,
-            session: this.session,
-          },
-          bubbles: true,
-          composed: true,
-        })
-      );
+    // Stop animation in all cases
+    this.stopKillingAnimation();
+    clearTimeout(killingTimeout);
 
-      logger.log(
-        `Session ${this.session.id} ${action === 'cleanup' ? 'cleaned up' : 'killed'} successfully`
-      );
-      clearTimeout(killingTimeout);
-      return true;
-    } catch (error) {
-      logger.error('Error killing session', { error, sessionId: this.session.id });
-
-      // Show error to user (keep animation to indicate something went wrong)
-      this.dispatchEvent(
-        new CustomEvent('session-kill-error', {
-          detail: {
-            sessionId: this.session.id,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          },
-          bubbles: true,
-          composed: true,
-        })
-      );
-      clearTimeout(killingTimeout);
-      return false;
-    } finally {
-      // Stop animation in all cases
-      this.stopKillingAnimation();
-      clearTimeout(killingTimeout);
-    }
+    return result.success;
   }
 
   private stopKillingAnimation() {
@@ -339,6 +366,10 @@ export class SessionCard extends LitElement {
     this.isHovered = false;
   }
 
+  private loadThemeFromStorage() {
+    this.terminalTheme = this.preferencesManager.getTheme();
+  }
+
   render() {
     // Debug logging to understand what's in the session
     if (!this.session.name) {
@@ -357,7 +388,7 @@ export class SessionCard extends LitElement {
           this.isActive && this.session.status === 'running'
             ? 'ring-2 ring-primary shadow-glow-sm'
             : ''
-        }"
+        } ${this.selected ? 'ring-2 ring-accent-primary shadow-card-hover' : ''}"
         style="view-transition-name: session-${this.session.id}; --session-id: session-${
           this.session.id
         }"
@@ -371,9 +402,9 @@ export class SessionCard extends LitElement {
       >
         <!-- Compact Header -->
         <div
-          class="flex justify-between items-center px-3 py-2 border-b border-dark-border bg-gradient-to-r from-dark-bg-secondary to-dark-bg-tertiary"
+          class="flex justify-between items-center px-3 py-2 border-b border-base bg-gradient-to-r from-secondary to-tertiary"
         >
-          <div class="text-xs font-mono pr-2 flex-1 min-w-0 text-accent-green">
+          <div class="text-xs font-mono pr-2 flex-1 min-w-0 text-primary">
             <inline-edit
               .value=${this.session.name || this.session.command?.join(' ') || ''}
               .placeholder=${this.session.command?.join(' ') || ''}
@@ -392,11 +423,12 @@ export class SessionCard extends LitElement {
               this.session.status === 'running' && isAIAssistantSession(this.session)
                 ? html`
                   <button
-                    class="bg-transparent border-0 p-0 cursor-pointer opacity-50 hover:opacity-100 transition-opacity duration-200 text-accent-primary"
+                    class="bg-transparent border-0 p-0 cursor-pointer opacity-50 hover:opacity-100 transition-opacity duration-200 text-primary"
                     @click=${(e: Event) => {
                       e.stopPropagation();
                       this.handleMagicButton();
                     }}
+                    id="session-magic-button"
                     title="Send prompt to update terminal title"
                     aria-label="Send magic prompt to AI assistant"
                     ?disabled=${this.isSendingPrompt}
@@ -421,6 +453,7 @@ export class SessionCard extends LitElement {
                     }"
                     @click=${this.handleKillClick}
                     ?disabled=${this.killing}
+                    id="session-kill-button"
                     title="${this.session.status === 'running' ? 'Kill session' : 'Clean up session'}"
                     data-testid="kill-session-button"
                   >
@@ -456,10 +489,10 @@ export class SessionCard extends LitElement {
 
         <!-- Terminal display (main content) -->
         <div
-          class="session-preview bg-black overflow-hidden flex-1 relative ${
+          class="session-preview bg-bg overflow-hidden flex-1 relative ${
             this.session.status === 'exited' ? 'session-exited' : ''
           }"
-          style="background: linear-gradient(to bottom, #0a0a0a, #080808); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);"
+          style="background: linear-gradient(to bottom, rgb(var(--color-bg)), rgb(var(--color-bg-secondary))); box-shadow: inset 0 1px 3px rgb(var(--color-bg) / 0.5);"
         >
           ${
             this.killing
@@ -474,6 +507,7 @@ export class SessionCard extends LitElement {
               : html`
                 <vibe-terminal-buffer
                   .sessionId=${this.session.id}
+                  .theme=${this.terminalTheme}
                   class="w-full h-full"
                   style="pointer-events: none;"
                   @content-changed=${this.handleContentChanged}
@@ -484,7 +518,7 @@ export class SessionCard extends LitElement {
 
         <!-- Compact Footer -->
         <div
-          class="px-3 py-2 text-dark-text-muted text-xs border-t border-dark-border bg-gradient-to-r from-dark-bg-tertiary to-dark-bg-secondary"
+          class="px-3 py-2 text-muted text-xs border-t border-base bg-gradient-to-r from-tertiary to-secondary"
         >
           <div class="flex justify-between items-center min-w-0">
             <span 
@@ -498,7 +532,7 @@ export class SessionCard extends LitElement {
                 this.session.status === 'running' &&
                 this.isActive &&
                 !this.session.activityStatus?.specificStatus
-                  ? html`<span class="text-accent-green animate-pulse ml-1">●</span>`
+                  ? html`<span class="text-primary animate-pulse ml-1">●</span>`
                   : ''
               }
             </span>
@@ -506,7 +540,8 @@ export class SessionCard extends LitElement {
               this.session.pid
                 ? html`
                   <span
-                    class="cursor-pointer hover:text-accent-green transition-colors text-xs flex-shrink-0 ml-2 inline-flex items-center gap-1"
+                    class="cursor-pointer hover:text-primary transition-colors text-xs flex-shrink-0 ml-2 inline-flex items-center gap-1"
+                    id="session-pid-copy"
                     @click=${this.handlePidClick}
                     title="Click to copy PID"
                   >
@@ -549,7 +584,7 @@ export class SessionCard extends LitElement {
       return 'text-status-error';
     }
     if (this.session.active === false) {
-      return 'text-dark-text-muted';
+      return 'text-muted';
     }
     return this.session.status === 'running' ? 'text-status-success' : 'text-status-warning';
   }
@@ -559,7 +594,7 @@ export class SessionCard extends LitElement {
       return 'text-status-error';
     }
     if (this.session.active === false) {
-      return 'text-dark-text-muted';
+      return 'text-muted';
     }
     if (this.session.status === 'running' && this.session.activityStatus?.specificStatus) {
       return 'text-status-warning';
@@ -572,7 +607,7 @@ export class SessionCard extends LitElement {
       return 'bg-status-error animate-pulse';
     }
     if (this.session.active === false) {
-      return 'bg-dark-text-muted';
+      return 'bg-muted';
     }
     if (this.session.status === 'running') {
       if (this.session.activityStatus?.specificStatus) {

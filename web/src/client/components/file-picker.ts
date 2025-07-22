@@ -117,6 +117,36 @@ export class FilePicker extends LitElement {
     this.handleFileClick();
   }
 
+  /**
+   * Public method to open file picker for images only
+   */
+  openImagePicker(): void {
+    if (!this.fileInput) {
+      this.createFileInput();
+    }
+
+    if (this.fileInput) {
+      this.fileInput.accept = 'image/*';
+      this.fileInput.removeAttribute('capture');
+      this.fileInput.click();
+    }
+  }
+
+  /**
+   * Public method to open camera for image capture
+   */
+  openCamera(): void {
+    if (!this.fileInput) {
+      this.createFileInput();
+    }
+
+    if (this.fileInput) {
+      this.fileInput.accept = 'image/*';
+      this.fileInput.capture = 'environment';
+      this.fileInput.click();
+    }
+  }
+
   private async uploadFileToServer(file: File): Promise<void> {
     this.uploading = true;
     this.uploadProgress = 0;
@@ -199,7 +229,8 @@ export class FilePicker extends LitElement {
     }
 
     if (this.fileInput) {
-      // Remove capture attribute for general file selection
+      // Reset to allow all files and remove capture attribute for general file selection
+      this.fileInput.accept = '*/*';
       this.fileInput.removeAttribute('capture');
       this.fileInput.click();
     }
@@ -216,9 +247,9 @@ export class FilePicker extends LitElement {
     }
 
     return html`
-      <div class="fixed inset-0 bg-black bg-opacity-80 backdrop-blur-sm flex items-center justify-center animate-fade-in" style="z-index: ${Z_INDEX.FILE_PICKER};" @click=${this.handleCancel}>
-        <div class="bg-dark-bg-elevated border border-dark-border rounded-xl shadow-2xl p-8 m-4 max-w-sm w-full animate-scale-in" @click=${(e: Event) => e.stopPropagation()}>
-          <h3 class="text-xl font-bold text-dark-text mb-6">
+      <div class="fixed inset-0 bg-bg bg-opacity-80 backdrop-blur-sm flex items-center justify-center animate-fade-in" style="z-index: ${Z_INDEX.FILE_PICKER};" @click=${this.handleCancel}>
+        <div class="bg-elevated border border-border/50 rounded-xl shadow-2xl p-8 m-4 max-w-sm w-full animate-scale-in" @click=${(e: Event) => e.stopPropagation()}>
+          <h3 class="text-xl font-bold text-primary mb-6">
             Select File
           </h3>
           
@@ -227,12 +258,12 @@ export class FilePicker extends LitElement {
               ? html`
             <div class="mb-6">
               <div class="flex items-center justify-between mb-3">
-                <span class="text-sm text-dark-text-muted font-mono">Uploading...</span>
-                <span class="text-sm text-accent-primary font-mono font-medium">${Math.round(this.uploadProgress)}%</span>
+                <span class="text-sm text-muted font-mono">Uploading...</span>
+                <span class="text-sm text-primary font-mono font-medium">${Math.round(this.uploadProgress)}%</span>
               </div>
-              <div class="w-full bg-dark-bg-secondary rounded-full h-2 overflow-hidden">
+              <div class="w-full bg-secondary rounded-full h-2 overflow-hidden">
                 <div 
-                  class="bg-gradient-to-r from-accent-primary to-accent-primary-light h-2 rounded-full transition-all duration-300 shadow-glow-primary-sm" 
+                  class="bg-gradient-to-r from-primary to-primary-light h-2 rounded-full transition-all duration-300 shadow-glow-sm" 
                   style="width: ${this.uploadProgress}%"
                 ></div>
               </div>
@@ -241,8 +272,9 @@ export class FilePicker extends LitElement {
               : html`
             <div class="space-y-4">
               <button
+                id="file-picker-choose-button"
                 @click=${this.handleFileClick}
-                class="w-full bg-accent-primary text-dark-bg font-medium py-4 px-6 rounded-lg flex items-center justify-center gap-3 transition-all duration-200 hover:bg-accent-primary-light hover:shadow-glow-primary active:scale-95"
+                class="w-full bg-primary text-bg font-medium py-4 px-6 rounded-lg flex items-center justify-center gap-3 transition-all duration-200 hover:bg-primary-light hover:shadow-glow active:scale-95"
               >
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                   <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-5L9 2H4z" clip-rule="evenodd"/>
@@ -253,10 +285,11 @@ export class FilePicker extends LitElement {
           `
           }
           
-          <div class="mt-6 pt-6 border-t border-dark-border">
+          <div class="mt-6 pt-6 border-t border-border/50">
             <button
+              id="file-picker-cancel-button"
               @click=${this.handleCancel}
-              class="w-full bg-dark-bg-secondary border border-dark-border text-dark-text font-mono py-3 px-6 rounded-lg transition-all duration-200 hover:bg-dark-surface-hover hover:border-dark-border-light active:scale-95"
+              class="w-full bg-secondary border border-border/50 text-primary font-mono py-3 px-6 rounded-lg transition-all duration-200 hover:bg-surface hover:border-primary active:scale-95"
               ?disabled=${this.uploading}
             >
               Cancel

@@ -20,30 +20,48 @@ struct AboutView: View {
 
     /// Special thanks contributors sorted by contribution count
     private let specialContributors = [
-        "Helmut Januschka",
         "Manuel Maly",
-        "Piotr Gredowski",
+        "Helmut Januschka",
+        "Jeff Hurray",
+        "David Collado",
         "Billy Irwin",
-        "Madhava Jay",
-        "Michi Hoffmann",
+        "Igor Tarasenko",
+        "Thomas Ricouard",
+        "Piotr Gredowski",
+        "hewigovens",
         "Chris Reynolds",
         "Clay Warren",
+        "Madhava Jay",
+        "Michi Hoffmann",
+        "Raghav Sethi",
         "Davi Andrade",
-        "Igor Tarasenko",
-        "Jeff Hurray",
         "Nityesh Agarwal",
+        "Devesh Shetty",
+        "Jan Remeš",
+        "Luis Nell",
+        "Luke",
+        "Marek Šuppa",
+        "Sandeep Aggarwal",
+        "Tao Xu",
         "Zhiqiang Zhou",
-        "noppe"
+        "noppe",
+        "Gopikrishna Kori",
+        "Claude Mini",
+        "Alex Mazanov",
+        "David Gomes",
+        "Piotr Bosak",
+        "Zhuojie Zhou",
+        "Alex Fallah"
     ]
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 24) {
+            VStack(spacing: 16) {
                 appInfoSection
                 descriptionSection
                 linksSection
 
-                Spacer(minLength: 10)
+                Spacer(minLength: 2)
 
                 copyrightSection
             }
@@ -54,7 +72,7 @@ struct AboutView: View {
     }
 
     private var appInfoSection: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             GlowingAppIcon(
                 size: 128,
                 enableFloating: true,
@@ -62,7 +80,7 @@ struct AboutView: View {
                 glowIntensity: 0.3,
                 action: openWebsite
             )
-            .padding(.bottom, 20)
+            .padding(.bottom, 8)
 
             Text(appName)
                 .font(.largeTitle)
@@ -72,7 +90,7 @@ struct AboutView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
-        .padding(.top, 40)
+        .padding(.top, 16)
     }
 
     @MainActor
@@ -88,7 +106,7 @@ struct AboutView: View {
     }
 
     private var linksSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             HoverableLink(url: "https://vibetunnel.sh", title: "Website", icon: "globe")
             HoverableLink(url: "https://github.com/amantus-ai/vibetunnel", title: "View on GitHub", icon: "link")
             HoverableLink(
@@ -101,7 +119,7 @@ struct AboutView: View {
     }
 
     private var copyrightSection: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             // Credits
             VStack(spacing: 4) {
                 Text("Brought to you by")
@@ -126,7 +144,7 @@ struct AboutView: View {
             }
 
             // Special Thanks
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 Text("Special thanks")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -151,7 +169,7 @@ struct AboutView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
-        .padding(.bottom, 32)
+        .padding(.bottom, 16)
     }
 }
 

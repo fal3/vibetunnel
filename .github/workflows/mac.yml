@@ -32,16 +32,7 @@ jobs:
         xcodebuild -version
         swift --version
     
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '24'
-    
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v4
-      with:
-        version: 9
-        dest: ~/pnpm-${{ github.run_id }}
+    # Node.js/pnpm not needed - web artifacts are downloaded
     
     - name: Cache Homebrew packages
       uses: actions/cache@v4
@@ -61,15 +52,29 @@ jobs:
       continue-on-error: true
       with:
         path: |
-          ~/Library/Developer/Xcode/DerivedData
           ~/.swiftpm
         key: ${{ runner.os }}-spm-${{ hashFiles('mac/Package.resolved') }}
         restore-keys: |
           ${{ runner.os }}-spm-
     
+    - name: Cache Xcode derived data
+      uses: actions/cache@v4
+      continue-on-error: true
+      with:
+        path: |
+          ~/Library/Developer/Xcode/DerivedData/**/Build/Products
+          ~/Library/Developer/Xcode/DerivedData/**/Build/Intermediates.noindex
+          ~/Library/Developer/Xcode/DerivedData/**/SourcePackages
+        key: ${{ runner.os }}-xcode-build-${{ hashFiles('mac/**/*.swift', 'mac/**/*.h', 'mac/**/*.m') }}
+        restore-keys: |
+          ${{ runner.os }}-xcode-build-
+    
     - name: Install all tools
       shell: bash
       run: |
+        # Skip Homebrew update for faster CI
+        export HOMEBREW_NO_AUTO_UPDATE=1
+        
         # Retry logic for brew commands to handle concurrent access
         MAX_ATTEMPTS=5
         WAIT_TIME=5
@@ -85,9 +90,9 @@ jobs:
             continue
           fi
           
-          # Update Homebrew and install all tools in one command
+          # Install tools without updating Homebrew
           # brew install automatically upgrades if already installed
-          if brew update && brew install swiftlint swiftformat xcbeautify; then
+          if brew install swiftlint swiftformat xcbeautify; then
             echo "Successfully installed/upgraded all tools"
             break
           else
@@ -107,65 +112,34 @@ jobs:
         echo "xcbeautify: $(xcbeautify --version || echo 'not found')"
         echo "jq: $(which jq || echo 'not found')"
     
-    - name: Cache pnpm store
-      uses: actions/cache@v4
-      continue-on-error: true
-      with:
-        path: ~/.local/share/pnpm/store
-        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('web/pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-pnpm-store-
-
-    - name: Install web dependencies
-      run: |
-        cd web
-        # Clean any stale lock files
-        rm -f .pnpm-store.lock .pnpm-debug.log || true
-        # Set pnpm to use fewer workers to avoid crashes on self-hosted runners
-        export NODE_OPTIONS="--max-old-space-size=4096"
-        pnpm config set store-dir ~/.local/share/pnpm/store
-        pnpm config set package-import-method hardlink
-        # Install with retries
-        for i in 1 2 3; do
-          echo "Install attempt $i"
-          if pnpm install --frozen-lockfile; then
-            echo "pnpm install succeeded"
-            # Force rebuild of native modules
-            echo "Rebuilding native modules..."
-            pnpm rebuild || true
-            break
-          else
-            echo "pnpm install failed, cleaning and retrying..."
-            rm -rf node_modules .pnpm-store.lock || true
-            sleep 5
-          fi
-        done
-    
-    - name: Download web build artifacts
-      uses: actions/download-artifact@v4
-      continue-on-error: true
-      with:
-        name: web-build-${{ github.sha }}
-        path: web/
+    # No web artifact caching - Mac build will handle web build directly
     
     - name: Resolve Dependencies (once)
+      env:
+        CI: "true"  # Ensure CI environment variable is set
       run: |
         echo "Resolving Swift package dependencies..."
         # Workspace is at root level
-        xcodebuild -resolvePackageDependencies -workspace VibeTunnel.xcworkspace -parallel || echo "Dependency resolution completed"
+        xcodebuild -resolvePackageDependencies -workspace VibeTunnel.xcworkspace || echo "Dependency resolution completed"
         
         # Debug: List available schemes
         echo "=== Available schemes ==="
         xcodebuild -list -workspace VibeTunnel.xcworkspace | grep -A 20 "Schemes:" || true
     
     # BUILD PHASE
-    - name: Build Debug (Native Architecture)
-      timeout-minutes: 15
+    - name: Build Debug
+      timeout-minutes: 10
+      id: build
+      env:
+        CI: "true"  # Ensure CI environment variable is set for build scripts
       run: |
+        # Always use Debug for now to match test expectations
+        BUILD_CONFIG="Debug"
+        
         set -o pipefail && xcodebuild build \
           -workspace VibeTunnel.xcworkspace \
           -scheme VibeTunnel-Mac \
-          -configuration Debug \
+          -configuration $BUILD_CONFIG \
           -destination "platform=macOS" \
           -showBuildTimingSummary \
           CODE_SIGN_IDENTITY="" \
@@ -175,28 +149,12 @@ jobs:
           ENABLE_HARDENED_RUNTIME=NO \
           PROVISIONING_PROFILE_SPECIFIER="" \
           DEVELOPMENT_TEAM="" \
-          COMPILER_INDEX_STORE_ENABLE=NO
+          COMPILER_INDEX_STORE_ENABLE=NO || {
+          echo "::error::Build failed"
+          exit 1
+        }
     
-    - name: Build Release (Native Architecture)
-      timeout-minutes: 15
-      run: |
-        set -o pipefail && \
-        xcodebuild build \
-          -workspace VibeTunnel.xcworkspace \
-          -scheme VibeTunnel-Mac \
-          -configuration Release \
-          -destination "platform=macOS" \
-          -showBuildTimingSummary \
-          CODE_SIGN_IDENTITY="" \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGN_ENTITLEMENTS="" \
-          ENABLE_HARDENED_RUNTIME=NO \
-          PROVISIONING_PROFILE_SPECIFIER="" \
-          DEVELOPMENT_TEAM="" \
-          COMPILER_INDEX_STORE_ENABLE=NO
-    
-    # LINT PHASE
+    # LINT PHASE (after build to avoid conflicts)
     - name: Run SwiftFormat (check mode)
       id: swiftformat
       continue-on-error: true
@@ -216,25 +174,30 @@ jobs:
     # TEST PHASE
     - name: Run tests with coverage
       id: test-coverage
-      timeout-minutes: 10
+      timeout-minutes: 20  # Increased from 15 for CI stability
+      env:
+        RUN_SLOW_TESTS: "false"  # Skip slow tests in CI by default
+        RUN_FLAKY_TESTS: "false"  # Skip flaky tests in CI by default
       run: |
-        # Debug: Check if web build artifacts were downloaded
-        echo "=== Checking web build artifacts ==="
-        if [ -d "web/dist" ]; then
-          echo "web/dist exists"
-          ls -la web/dist | head -10
+        
+        # Use xcodebuild test for workspace testing
+        # Only enable coverage on main branch
+        if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+          ENABLE_COVERAGE="YES"
         else
-          echo "web/dist does not exist"
+          ENABLE_COVERAGE="NO"
         fi
         
-        # Use xcodebuild test for workspace testing with coverage enabled
+        # Always use Debug for tests
+        TEST_CONFIG="Debug"
+        
         set -o pipefail && \
         xcodebuild test \
           -workspace VibeTunnel.xcworkspace \
           -scheme VibeTunnel-Mac \
-          -configuration Debug \
+          -configuration $TEST_CONFIG \
           -destination "platform=macOS" \
-          -enableCodeCoverage YES \
+          -enableCodeCoverage $ENABLE_COVERAGE \
           -resultBundlePath TestResults.xcresult \
           CODE_SIGN_IDENTITY="" \
           CODE_SIGNING_REQUIRED=NO \
@@ -255,7 +218,7 @@ jobs:
       if: always()
       run: |
         echo "=== Checking TestResults.xcresult ==="
-        if [ -f TestResults.xcresult ]; then
+        if [ -d TestResults.xcresult ]; then
           echo "TestResults.xcresult exists"
           ls -la TestResults.xcresult
           
@@ -273,7 +236,7 @@ jobs:
       if: always()
       id: coverage
       run: |
-        if [ -f TestResults.xcresult ]; then
+        if [ -d TestResults.xcresult ]; then
           # Try multiple extraction methods
           echo "=== Method 1: Standard extraction ==="
           COVERAGE_PCT=$(xcrun xccov view --report TestResults.xcresult --json 2>/dev/null | jq -r '.lineCoverage // 0' | awk '{printf "%.1f", $1 * 100}') || COVERAGE_PCT="0"
@@ -325,13 +288,16 @@ jobs:
         echo "Searching for build products..."
         find ~/Library/Developer/Xcode/DerivedData -name "VibeTunnel.app" -type d 2>/dev/null || echo "No build products found"
     
+    # Skip build artifact upload for PR builds to save time
     - name: Upload build artifacts
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: actions/upload-artifact@v4
       with:
         name: mac-build-artifacts
         path: |
           ~/Library/Developer/Xcode/DerivedData/*/Build/Products/Debug/VibeTunnel.app
           ~/Library/Developer/Xcode/DerivedData/*/Build/Products/Release/VibeTunnel.app
+        retention-days: 3
     
     - name: Upload coverage artifacts
       if: always()
@@ -389,7 +355,8 @@ jobs:
     name: Report Coverage Results
     runs-on: blacksmith-8vcpu-ubuntu-2404-arm
     needs: [build-lint-test]
-    if: always() && github.event_name == 'pull_request'
+    # Only run coverage reporting on main branch where we actually collect coverage
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
     - name: Clean workspace

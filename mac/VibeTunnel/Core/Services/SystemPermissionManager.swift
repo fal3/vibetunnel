@@ -4,7 +4,6 @@ import CoreGraphics
 import Foundation
 import Observation
 import OSLog
-@preconcurrency import ScreenCaptureKit
 
 extension Notification.Name {
     static let permissionsUpdated = Notification.Name("sh.vibetunnel.permissionsUpdated")
@@ -13,18 +12,15 @@ extension Notification.Name {
 /// Types of system permissions that VibeTunnel requires.
 ///
 /// Represents the various macOS system permissions needed for full functionality,
-/// including automation, screen recording, and accessibility access.
+/// including automation and accessibility access.
 enum SystemPermission {
     case appleScript
-    case screenRecording
     case accessibility
 
     var displayName: String {
         switch self {
         case .appleScript:
             "Automation"
-        case .screenRecording:
-            "Screen Recording"
         case .accessibility:
             "Accessibility"
         }
@@ -34,10 +30,8 @@ enum SystemPermission {
         switch self {
         case .appleScript:
             "Required to launch and control terminal applications"
-        case .screenRecording:
-            "Required for screen capture and tracking terminal windows"
         case .accessibility:
-            "Required to send keystrokes to terminal windows"
+            "Required to track and interact with terminal windows"
         }
     }
 
@@ -45,8 +39,6 @@ enum SystemPermission {
         switch self {
         case .appleScript:
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"
-        case .screenRecording:
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         case .accessibility:
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         }
@@ -55,8 +47,8 @@ enum SystemPermission {
 
 /// Unified manager for all system permissions required by VibeTunnel.
 ///
-/// Monitors and manages macOS system permissions including Apple Script automation,
-/// screen recording, and accessibility access. Provides a centralized interface for
+/// Monitors and manages macOS system permissions including Apple Script automation
+/// and accessibility access. Provides a centralized interface for
 /// checking permission status and guiding users through the granting process.
 @MainActor
 @Observable
@@ -66,7 +58,6 @@ final class SystemPermissionManager {
     /// Permission states
     private(set) var permissions: [SystemPermission: Bool] = [
         .appleScript: false,
-        .screenRecording: false,
         .accessibility: false
     ]
 
@@ -111,8 +102,6 @@ final class SystemPermissionManager {
         switch permission {
         case .appleScript:
             requestAppleScriptPermission()
-        case .screenRecording:
-            openSystemSettings(for: permission)
         case .accessibility:
             requestAccessibilityPermission()
         }
@@ -131,7 +120,6 @@ final class SystemPermissionManager {
 
         // Clear any cached values
         permissions[.accessibility] = false
-        permissions[.screenRecording] = false
         permissions[.appleScript] = false
 
         // Immediate check
@@ -218,7 +206,6 @@ final class SystemPermissionManager {
 
         // Check each permission type
         permissions[.appleScript] = await checkAppleScriptPermission()
-        permissions[.screenRecording] = await checkScreenRecordingPermission()
         permissions[.accessibility] = checkAccessibilityPermission()
 
         // Post notification if any permissions changed
@@ -263,19 +250,6 @@ final class SystemPermissionManager {
         }
     }
 
-    // MARK: - Screen Recording Permission
-
-    private func checkScreenRecordingPermission() async -> Bool {
-        do {
-            // This will trigger the permission prompt if needed
-            _ = try await SCShareableContent.current
-            return true
-        } catch {
-            logger.debug("Screen recording permission not granted: \(error)")
-            return false
-        }
-    }
-
     // MARK: - Accessibility Permission
 
     private func checkAccessibilityPermission() -> Bool {
@@ -296,8 +270,11 @@ final class SystemPermissionManager {
         if appResult == .success, let app = focusedApp {
             // Try to get windows from the app - this definitely needs accessibility
             var windows: CFTypeRef?
+            // Use unsafeBitCast for CFTypeRef to AXUIElement conversion
+            // This is safe because AXUIElementCopyAttributeValue guarantees the result is an AXUIElement
+            let axElement = unsafeDowncast(app, to: AXUIElement.self)
             let windowResult = AXUIElementCopyAttributeValue(
-                app as! AXUIElement,
+                axElement,
                 kAXWindowsAttribute as CFString,
                 &windows
             )

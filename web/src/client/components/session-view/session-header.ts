@@ -6,15 +6,19 @@
  */
 import { html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { Session } from '../session-list.js';
+import type { Session } from '../../../shared/types.js';
 import '../clickable-path.js';
 import './width-selector.js';
 import '../inline-edit.js';
 import '../notification-status.js';
+import '../keyboard-capture-indicator.js';
 import { authClient } from '../../services/auth-client.js';
 import { isAIAssistantSession, sendAIPrompt } from '../../utils/ai-sessions.js';
 import { createLogger } from '../../utils/logger.js';
 import './mobile-menu.js';
+import '../theme-toggle-icon.js';
+import './image-upload-menu.js';
+import './session-status-dropdown.js';
 
 const logger = createLogger('session-header');
 
@@ -43,9 +47,21 @@ export class SessionHeader extends LitElement {
   @property({ type: Function }) onMaxWidthToggle?: () => void;
   @property({ type: Function }) onWidthSelect?: (width: number) => void;
   @property({ type: Function }) onFontSizeChange?: (size: number) => void;
-  @property({ type: Function }) onScreenshare?: () => void;
   @property({ type: Function }) onOpenSettings?: () => void;
+  @property({ type: String }) currentTheme = 'system';
+  @property({ type: Boolean }) keyboardCaptureActive = true;
+  @property({ type: Boolean }) isMobile = false;
+  @property({ type: Boolean }) macAppConnected = false;
+  @property({ type: Function }) onTerminateSession?: () => void;
+  @property({ type: Function }) onClearSession?: () => void;
   @state() private isHovered = false;
+
+  connectedCallback() {
+    super.connectedCallback();
+    // Load saved theme preference
+    const saved = localStorage.getItem('vibetunnel-theme');
+    this.currentTheme = (saved as 'light' | 'dark' | 'system') || 'system';
+  }
 
   private getStatusText(): string {
     if (!this.session) return '';
@@ -56,17 +72,17 @@ export class SessionHeader extends LitElement {
   }
 
   private getStatusColor(): string {
-    if (!this.session) return 'text-dark-text-muted';
+    if (!this.session) return 'text-muted';
     if ('active' in this.session && this.session.active === false) {
-      return 'text-dark-text-muted';
+      return 'text-muted';
     }
     return this.session.status === 'running' ? 'text-status-success' : 'text-status-warning';
   }
 
   private getStatusDotColor(): string {
-    if (!this.session) return 'bg-dark-text-muted';
+    if (!this.session) return 'bg-muted';
     if ('active' in this.session && this.session.active === false) {
-      return 'bg-dark-text-muted';
+      return 'bg-muted';
     }
     return this.session.status === 'running' ? 'bg-status-success' : 'bg-status-warning';
   }
@@ -84,9 +100,9 @@ export class SessionHeader extends LitElement {
     if (!this.session) return null;
 
     return html`
-      <!-- Enhanced Header with gradient background -->
+      <!-- Header with consistent dark theme -->
       <div
-        class="flex items-center justify-between border-b border-dark-border text-sm min-w-0 bg-gradient-to-r from-dark-bg-secondary to-dark-bg-tertiary px-4 py-2 shadow-sm"
+        class="flex items-center justify-between border-b border-border text-sm min-w-0 bg-bg-secondary px-4 py-2"
         style="padding-top: max(0.5rem, env(safe-area-inset-top)); padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right));"
       >
         <div class="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
@@ -95,7 +111,7 @@ export class SessionHeader extends LitElement {
             this.showSidebarToggle && this.sidebarCollapsed
               ? html`
                 <button
-                  class="bg-dark-bg-elevated border border-dark-border rounded-lg p-2 font-mono text-dark-text-muted transition-all duration-200 hover:text-accent-primary hover:bg-dark-surface-hover hover:border-accent-primary hover:shadow-sm flex-shrink-0"
+                  class="bg-bg-tertiary border border-border rounded-lg p-2 font-mono text-muted transition-all duration-200 hover:text-primary hover:bg-surface-hover hover:border-primary hover:shadow-sm flex-shrink-0"
                   @click=${() => this.onSidebarToggle?.()}
                   title="Show sidebar (⌘B)"
                   aria-label="Show sidebar"
@@ -110,7 +126,7 @@ export class SessionHeader extends LitElement {
                 
                 <!-- Create Session button (desktop only) -->
                 <button
-                  class="hidden sm:flex bg-accent-primary bg-opacity-10 border border-accent-primary text-accent-primary rounded-lg p-2 font-mono transition-all duration-200 hover:bg-accent-primary hover:text-dark-bg hover:shadow-glow-primary-sm flex-shrink-0"
+                  class="hidden sm:flex bg-bg-tertiary border border-border text-primary rounded-lg p-2 font-mono transition-all duration-200 hover:bg-surface-hover hover:border-primary hover:shadow-glow-primary-sm flex-shrink-0"
                   @click=${() => this.onCreateSession?.()}
                   title="Create New Session (⌘K)"
                   data-testid="create-session-button"
@@ -136,7 +152,7 @@ export class SessionHeader extends LitElement {
             this.showBackButton
               ? html`
                 <button
-                  class="bg-dark-bg-elevated border border-dark-border rounded-lg px-3 py-1.5 font-mono text-xs text-dark-text-muted transition-all duration-200 hover:text-accent-primary hover:bg-dark-surface-hover hover:border-accent-primary hover:shadow-sm flex-shrink-0"
+                  class="bg-bg-tertiary border border-border rounded-lg px-3 py-1.5 font-mono text-xs text-muted transition-all duration-200 hover:text-primary hover:bg-surface-hover hover:border-primary hover:shadow-sm flex-shrink-0"
                   @click=${() => this.onBack?.()}
                 >
                   Back
@@ -144,9 +160,9 @@ export class SessionHeader extends LitElement {
               `
               : ''
           }
-          <div class="text-dark-text min-w-0 flex-1 overflow-hidden">
-            <div class="text-dark-text-bright font-medium text-xs sm:text-sm min-w-0 overflow-hidden">
-              <div class="grid grid-cols-[1fr_auto] items-center gap-2 min-w-0" @mouseenter=${this.handleMouseEnter} @mouseleave=${this.handleMouseLeave}>
+          <div class="text-primary min-w-0 flex-1 overflow-hidden">
+            <div class="text-bright font-medium text-xs sm:text-sm min-w-0 overflow-hidden">
+              <div class="flex items-center gap-1 min-w-0" @mouseenter=${this.handleMouseEnter} @mouseleave=${this.handleMouseLeave}>
                 <inline-edit
                   class="min-w-0"
                   .value=${
@@ -166,16 +182,26 @@ export class SessionHeader extends LitElement {
                   isAIAssistantSession(this.session)
                     ? html`
                       <button
-                        class="bg-transparent border-0 p-0 cursor-pointer transition-opacity duration-200 text-accent-primary magic-button flex-shrink-0 ${this.isHovered ? 'opacity-50 hover:opacity-100' : 'opacity-0'}"
+                        class="bg-transparent border-0 p-0 cursor-pointer transition-opacity duration-200 text-primary magic-button flex-shrink-0 ${this.isHovered ? 'opacity-50 hover:opacity-100' : 'opacity-0'} ml-1"
                         @click=${(e: Event) => {
                           e.stopPropagation();
                           this.handleMagicButton();
                         }}
                         title="Send prompt to update terminal title"
                       >
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                          <path d="M14.9 0.3a1 1 0 01-.2 1.4l-4 3a1 1 0 01-1.4-.2l-.3-.4a1 1 0 01.2-1.4l4-3a1 1 0 011.4.2l.3.4zM11.5 2.5l-1.5 1-1 1.5L3.5 10.5l-.3.3a2 2 0 00-.5.8l-.7 2.4a.5.5 0 00.6.6l2.4-.7a2 2 0 00.8-.5l.3-.3L11.5 7.5l1.5-1 1-1.5-2.5-2.5zM3 13l-.7.2.2-.7a1 1 0 01.2-.4l.3-.1v.5a.5.5 0 00.5.5h.5l-.1.3a1 1 0 01-.4.2L3 13z"/>
-                          <path d="M9 1a1 1 0 100 2 1 1 0 000-2zM5 0a1 1 0 100 2 1 1 0 000-2zM2 3a1 1 0 100 2 1 1 0 000-2zM14 6a1 1 0 100 2 1 1 0 000-2zM15 10a1 1 0 100 2 1 1 0 000-2zM12 13a1 1 0 100 2 1 1 0 000-2z" opacity="0.5"/>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                          <!-- Wand -->
+                          <path d="M9.5 21.5L21.5 9.5a1 1 0 000-1.414l-1.086-1.086a1 1 0 00-1.414 0L7 19l2.5 2.5z" opacity="0.9"/>
+                          <path d="M6 18l-1.5 3.5a.5.5 0 00.7.7L8.5 21l-2.5-3z" opacity="0.9"/>
+                          <!-- Sparkles/Rays -->
+                          <circle cx="8" cy="4" r="1"/>
+                          <circle cx="4" cy="8" r="1"/>
+                          <circle cx="16" cy="4" r="1"/>
+                          <circle cx="20" cy="8" r="1"/>
+                          <circle cx="12" cy="2" r=".5"/>
+                          <circle cx="2" cy="12" r=".5"/>
+                          <circle cx="22" cy="12" r=".5"/>
+                          <circle cx="18" cy="2" r=".5"/>
                         </svg>
                       </button>
                       <style>
@@ -203,44 +229,57 @@ export class SessionHeader extends LitElement {
           </div>
         </div>
         <div class="flex items-center gap-2 text-xs flex-shrink-0 ml-2">
-          <!-- Notification status - desktop only -->
+          <!-- Status dropdown - desktop only -->
           <div class="hidden sm:block">
-            <notification-status
-              @open-settings=${() => this.onOpenSettings?.()}
-            ></notification-status>
+            <session-status-dropdown
+              .session=${this.session}
+              .onTerminate=${this.onTerminateSession}
+              .onClear=${this.onClearSession}
+            ></session-status-dropdown>
           </div>
+          
+          <!-- Keyboard capture indicator -->
+          <keyboard-capture-indicator
+            .active=${this.keyboardCaptureActive}
+            .isMobile=${this.isMobile}
+            @capture-toggled=${(e: CustomEvent) => {
+              this.dispatchEvent(
+                new CustomEvent('capture-toggled', {
+                  detail: e.detail,
+                  bubbles: true,
+                  composed: true,
+                })
+              );
+            }}
+          ></keyboard-capture-indicator>
           
           <!-- Desktop buttons - hidden on mobile -->
           <div class="hidden sm:flex items-center gap-2">
-            <button
-              class="bg-dark-bg-elevated border border-dark-border rounded-lg p-2 font-mono text-dark-text-muted transition-all duration-200 hover:text-accent-primary hover:bg-dark-surface-hover hover:border-accent-primary hover:shadow-sm flex-shrink-0"
-              @click=${(e: Event) => {
-                e.stopPropagation();
-                this.onOpenFileBrowser?.();
+            <!-- Image Upload Menu -->
+            <image-upload-menu
+              .onPasteImage=${() => this.handlePasteImage()}
+              .onSelectImage=${() => this.handleSelectImage()}
+              .onOpenCamera=${() => this.handleOpenCamera()}
+              .onBrowseFiles=${() => this.onOpenFileBrowser?.()}
+              .isMobile=${this.isMobile}
+            ></image-upload-menu>
+            
+            <!-- Theme toggle -->
+            <theme-toggle-icon
+              .theme=${this.currentTheme}
+              @theme-changed=${(e: CustomEvent) => {
+                this.currentTheme = e.detail.theme;
               }}
-              title="Browse Files (⌘O)"
-              data-testid="file-browser-button"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                <path
-                  d="M1.75 1h5.5c.966 0 1.75.784 1.75 1.75v1h4c.966 0 1.75.784 1.75 1.75v7.75A1.75 1.75 0 0113 15H3a1.75 1.75 0 01-1.75-1.75V2.75C1.25 1.784 1.784 1 1.75 1zM2.75 2.5v10.75c0 .138.112.25.25.25h10a.25.25 0 00.25-.25V5.5a.25.25 0 00-.25-.25H8.75v-2.5a.25.25 0 00-.25-.25h-5.5a.25.25 0 00-.25.25z"
-                />
-              </svg>
-            </button>
+            ></theme-toggle-icon>
+            
+            <!-- Settings button -->
+            <notification-status
+              @open-settings=${() => this.onOpenSettings?.()}
+            ></notification-status>
+            
+            <!-- Terminal size button -->
             <button
-              class="bg-dark-bg-elevated border border-dark-border rounded-lg p-2 font-mono text-dark-text-muted transition-all duration-200 hover:text-accent-primary hover:bg-dark-surface-hover hover:border-accent-primary hover:shadow-sm flex-shrink-0"
-              @click=${() => this.onScreenshare?.()}
-              title="Start Screenshare"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                <line x1="8" y1="21" x2="16" y2="21"/>
-                <line x1="12" y1="17" x2="12" y2="21"/>
-                <circle cx="12" cy="10" r="3" fill="currentColor" stroke="none"/>
-              </svg>
-            </button>
-            <button
-              class="bg-dark-bg-elevated border border-dark-border rounded-lg px-3 py-2 font-mono text-xs text-dark-text-muted transition-all duration-200 hover:text-accent-primary hover:bg-dark-surface-hover hover:border-accent-primary hover:shadow-sm flex-shrink-0 width-selector-button"
+              class="bg-bg-tertiary border border-border rounded-lg px-3 py-2 font-mono text-xs text-muted transition-all duration-200 hover:text-primary hover:bg-surface-hover hover:border-primary hover:shadow-sm flex-shrink-0 width-selector-button"
               @click=${() => this.onMaxWidthToggle?.()}
               title="${this.widthTooltip}"
             >
@@ -255,28 +294,13 @@ export class SessionHeader extends LitElement {
               .widthLabel=${this.widthLabel}
               .widthTooltip=${this.widthTooltip}
               .onOpenFileBrowser=${this.onOpenFileBrowser}
-              .onScreenshare=${this.onScreenshare}
+              .onUploadImage=${() => this.handleMobileUploadImage()}
               .onMaxWidthToggle=${this.onMaxWidthToggle}
               .onOpenSettings=${this.onOpenSettings}
               .onCreateSession=${this.onCreateSession}
+              .currentTheme=${this.currentTheme}
+              .macAppConnected=${this.macAppConnected}
             ></mobile-menu>
-          </div>
-          
-          <!-- Status indicator - desktop only (mobile shows it on the left) -->
-          <div class="hidden sm:flex flex-col items-end gap-0">
-            <span class="text-xs flex items-center gap-2 font-medium ${
-              this.getStatusText() === 'running' ? 'text-status-success' : 'text-status-warning'
-            }">
-              <div class="relative">
-                <div class="w-2.5 h-2.5 rounded-full ${this.getStatusDotColor()}"></div>
-                ${
-                  this.getStatusText() === 'running'
-                    ? html`<div class="absolute inset-0 w-2.5 h-2.5 rounded-full bg-status-success animate-ping opacity-50"></div>`
-                    : ''
-                }
-              </div>
-              ${this.getStatusText().toUpperCase()}
-            </span>
           </div>
         </div>
       </div>
@@ -316,4 +340,44 @@ export class SessionHeader extends LitElement {
   private handleMouseLeave = () => {
     this.isHovered = false;
   };
+
+  private handlePasteImage() {
+    // Dispatch event to session-view to handle paste
+    this.dispatchEvent(
+      new CustomEvent('paste-image', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private handleSelectImage() {
+    // Always dispatch select-image event to trigger the OS picker directly
+    this.dispatchEvent(
+      new CustomEvent('select-image', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private handleOpenCamera() {
+    // Dispatch event to session-view to open camera
+    this.dispatchEvent(
+      new CustomEvent('open-camera', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private handleMobileUploadImage() {
+    // Directly trigger the OS image picker
+    this.dispatchEvent(
+      new CustomEvent('select-image', {
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
 }

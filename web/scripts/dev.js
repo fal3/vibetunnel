@@ -74,11 +74,6 @@ async function startBuilding() {
       outfile: 'public/bundle/test.js',
     });
 
-    const screencapContext = await esbuild.context({
-      ...devOptions,
-      entryPoints: ['src/client/screencap-entry.ts'],
-      outfile: 'public/bundle/screencap.js',
-    });
 
     const swContext = await esbuild.context({
       ...devOptions,
@@ -90,15 +85,19 @@ async function startBuilding() {
     // Start watching
     await clientContext.watch();
     await testContext.watch();
-    await screencapContext.watch();
     await swContext.watch();
     console.log('ESBuild watching client bundles...');
 
     // Start other processes
     const processes = commands.map(([cmd, args], index) => {
+      // Create env without VIBETUNNEL_SEA for development mode
+      const env = { ...process.env };
+      delete env.VIBETUNNEL_SEA;
+      
       const proc = spawn(cmd, args, { 
         stdio: 'inherit',
-        shell: process.platform === 'win32'
+        shell: process.platform === 'win32',
+        env: env
       });
       
       proc.on('error', (err) => {
@@ -113,7 +112,6 @@ async function startBuilding() {
       console.log('\nStopping all processes...');
       await clientContext.dispose();
       await testContext.dispose();
-      await screencapContext.dispose();
       await swContext.dispose();
       processes.forEach(proc => proc.kill());
       process.exit(0);

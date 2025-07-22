@@ -1,7 +1,9 @@
 import chalk from 'chalk';
+import compression from 'compression';
 import type { Response as ExpressResponse } from 'express';
 import express from 'express';
 import * as fs from 'fs';
+import helmet from 'helmet';
 import type * as http from 'http';
 import { createServer } from 'http';
 import * as os from 'os';
@@ -12,23 +14,26 @@ import type { AuthenticatedRequest } from './middleware/auth.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { PtyManager } from './pty/index.js';
 import { createAuthRoutes } from './routes/auth.js';
+import { createConfigRoutes } from './routes/config.js';
+import { createEventsRouter } from './routes/events.js';
 import { createFileRoutes } from './routes/files.js';
 import { createFilesystemRoutes } from './routes/filesystem.js';
 import { createLogRoutes } from './routes/logs.js';
+import { createPreferencesRouter } from './routes/preferences.js';
 import { createPushRoutes } from './routes/push.js';
 import { createRemoteRoutes } from './routes/remotes.js';
-import { createScreencapRoutes, initializeScreencap } from './routes/screencap.js';
+import { createRepositoryRoutes } from './routes/repositories.js';
 import { createSessionRoutes } from './routes/sessions.js';
-import { createWebRTCConfigRouter } from './routes/webrtc-config.js';
 import { WebSocketInputHandler } from './routes/websocket-input.js';
 import { ActivityMonitor } from './services/activity-monitor.js';
 import { AuthService } from './services/auth-service.js';
-import { BellEventHandler } from './services/bell-event-handler.js';
 import { BufferAggregator } from './services/buffer-aggregator.js';
+import { ConfigService } from './services/config-service.js';
 import { ControlDirWatcher } from './services/control-dir-watcher.js';
 import { HQClient } from './services/hq-client.js';
 import { mdnsService } from './services/mdns-service.js';
 import { PushNotificationService } from './services/push-notification-service.js';
+import { PushNotificationStatusService } from './services/push-notification-status-service.js';
 import { RemoteRegistry } from './services/remote-registry.js';
 import { StreamWatcher } from './services/stream-watcher.js';
 import { TerminalManager } from './services/terminal-manager.js';
@@ -326,6 +331,7 @@ interface AppInstance {
   wss: WebSocketServer;
   startServer: () => void;
   config: Config;
+  configService: ConfigService;
   ptyManager: PtyManager;
   terminalManager: TerminalManager;
   streamWatcher: StreamWatcher;
@@ -374,7 +380,34 @@ export async function createApp(): Promise<AppInstance> {
   logger.log('Initializing VibeTunnel server components');
   const app = express();
   const server = createServer(app);
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
+
+  // Add security headers with Helmet
+  app.use(
+    helmet({
+      contentSecurityPolicy: false, // We handle CSP ourselves for the web terminal
+      crossOriginEmbedderPolicy: false, // Allow embedding in iframes for integrations
+    })
+  );
+  logger.debug('Configured security headers with helmet');
+
+  // Add compression middleware with Brotli support
+  // Skip compression for SSE streams (asciicast)
+  app.use(
+    compression({
+      filter: (req, res) => {
+        // Skip compression for Server-Sent Events (asciicast streams)
+        if (req.path.match(/\/api\/sessions\/[^/]+\/stream$/)) {
+          return false;
+        }
+        // Use default filter for other requests
+        return compression.filter(req, res);
+      },
+      // Enable Brotli compression with highest priority
+      level: 6, // Balanced compression level
+    })
+  );
+  logger.debug('Configured compression middleware (with asciicast exclusion)');
 
   // Add JSON body parser middleware with size limit
   app.use(express.json({ limit: '10mb' }));
@@ -392,7 +425,8 @@ export async function createApp(): Promise<AppInstance> {
     logger.debug(`Using existing control directory: ${CONTROL_DIR}`);
   }
 
-  // Initialize PTY manager
+  // Initialize PTY manager with fallback support
+  await PtyManager.initialize();
   const ptyManager = new PtyManager(CONTROL_DIR);
   logger.debug('Initialized PTY manager');
 
@@ -418,17 +452,21 @@ export async function createApp(): Promise<AppInstance> {
   logger.debug('Initialized terminal manager');
 
   // Initialize stream watcher for file-based streaming
-  const streamWatcher = new StreamWatcher();
+  const streamWatcher = new StreamWatcher(sessionManager);
   logger.debug('Initialized stream watcher');
 
   // Initialize activity monitor
   const activityMonitor = new ActivityMonitor(CONTROL_DIR);
   logger.debug('Initialized activity monitor');
 
+  // Initialize configuration service
+  const configService = new ConfigService();
+  configService.startWatching();
+  logger.debug('Initialized configuration service');
+
   // Initialize push notification services
   let vapidManager: VapidManager | null = null;
   let pushNotificationService: PushNotificationService | null = null;
-  let bellEventHandler: BellEventHandler | null = null;
 
   if (config.pushEnabled) {
     try {
@@ -447,17 +485,12 @@ export async function createApp(): Promise<AppInstance> {
       pushNotificationService = new PushNotificationService(vapidManager);
       await pushNotificationService.initialize();
 
-      // Initialize bell event handler
-      bellEventHandler = new BellEventHandler();
-      bellEventHandler.setPushNotificationService(pushNotificationService);
-
       logger.log(chalk.green('Push notification services initialized'));
     } catch (error) {
       logger.error('Failed to initialize push notification services:', error);
       logger.warn('Continuing without push notifications');
       vapidManager = null;
       pushNotificationService = null;
-      bellEventHandler = null;
     }
   } else {
     logger.debug('Push notifications disabled');
@@ -519,14 +552,113 @@ export async function createApp(): Promise<AppInstance> {
     localAuthToken: config.localAuthToken || undefined,
   });
 
-  // Serve static files with .html extension handling
-  const publicPath = path.join(process.cwd(), 'public');
+  // Serve static files with .html extension handling and caching headers
+  // In production/bundled mode, use the package directory; in development, use cwd
+  const getPublicPath = () => {
+    // First check if BUILD_PUBLIC_PATH is set (used by Mac app bundle)
+    if (process.env.BUILD_PUBLIC_PATH) {
+      logger.info(`Using BUILD_PUBLIC_PATH: ${process.env.BUILD_PUBLIC_PATH}`);
+      return process.env.BUILD_PUBLIC_PATH;
+    }
+    // More precise npm package detection:
+    // 1. Check if we're explicitly in an npm package structure
+    // 2. The file should be in node_modules/vibetunnel/lib/
+    // 3. Or check for our specific package markers
+    const isNpmPackage = (() => {
+      // Most reliable: check if we're in node_modules/vibetunnel structure
+      if (__filename.includes(path.join('node_modules', 'vibetunnel', 'lib'))) {
+        return true;
+      }
+
+      // Check for Windows path variant
+      if (__filename.includes('node_modules\\vibetunnel\\lib')) {
+        return true;
+      }
+
+      // Secondary check: if we're in a lib directory, verify it's actually an npm package
+      // by checking for the existence of package.json in the parent directory
+      if (path.basename(__dirname) === 'lib') {
+        const parentDir = path.dirname(__dirname);
+        const packageJsonPath = path.join(parentDir, 'package.json');
+        try {
+          const packageJson = require(packageJsonPath);
+          // Verify this is actually our package
+          return packageJson.name === 'vibetunnel';
+        } catch {
+          // Not a valid npm package structure
+          return false;
+        }
+      }
+
+      return false;
+    })();
+
+    if (process.env.VIBETUNNEL_BUNDLED === 'true' || process.env.BUILD_DATE || isNpmPackage) {
+      // In bundled/production/npm mode, find package root
+      // When bundled, __dirname is /path/to/package/dist, so go up one level
+      // When globally installed, we need to find the package root
+      let packageRoot = __dirname;
+
+      // If we're in the dist directory, go up one level
+      if (path.basename(packageRoot) === 'dist') {
+        packageRoot = path.dirname(packageRoot);
+      }
+
+      // For npm package context, if we're in lib directory, go up one level
+      if (path.basename(packageRoot) === 'lib') {
+        packageRoot = path.dirname(packageRoot);
+      }
+
+      // Look for package.json to confirm we're in the right place
+      const publicPath = path.join(packageRoot, 'public');
+      const indexPath = path.join(publicPath, 'index.html');
+
+      // If index.html exists, we found the right path
+      if (require('fs').existsSync(indexPath)) {
+        return publicPath;
+      }
+
+      // Fallback: try going up from the bundled CLI location
+      // The bundled CLI might be in node_modules/vibetunnel/dist/
+      return path.join(__dirname, '..', 'public');
+    } else {
+      // In development mode, use current working directory
+      return path.join(process.cwd(), 'public');
+    }
+  };
+
+  const publicPath = getPublicPath();
+  const isDevelopment = !process.env.BUILD_DATE || process.env.NODE_ENV === 'development';
+
   app.use(
     express.static(publicPath, {
       extensions: ['html'], // This allows /logs to resolve to /logs.html
+      maxAge: isDevelopment ? 0 : '1d', // No cache in dev, 1 day in production
+      etag: !isDevelopment, // Disable ETag in development
+      lastModified: !isDevelopment, // Disable Last-Modified in development
+      setHeaders: (res, filePath) => {
+        if (isDevelopment) {
+          // Disable all caching in development
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        } else {
+          // Production caching rules
+          // Set longer cache for immutable assets
+          if (filePath.match(/\.(js|css|woff2?|ttf|eot|svg|png|jpg|jpeg|gif|ico)$/)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+          // Shorter cache for HTML files
+          else if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'public, max-age=3600'); // 1 hour
+          }
+        }
+      },
     })
   );
-  logger.debug(`Serving static files from: ${publicPath}`);
+  logger.debug(
+    `Serving static files from: ${publicPath} ${isDevelopment ? 'with caching disabled (dev mode)' : 'with caching headers'}`
+  );
 
   // Health check endpoint (no auth required)
   app.get('/api/health', (_req, res) => {
@@ -542,14 +674,143 @@ export async function createApp(): Promise<AppInstance> {
     });
   });
 
-  // Connect bell event handler to PTY manager if push notifications are enabled
-  if (bellEventHandler) {
-    ptyManager.on('bell', (bellContext) => {
-      bellEventHandler.processBellEvent(bellContext).catch((error) => {
-        logger.error('Failed to process bell event:', error);
-      });
+  // Connect session exit notifications if push notifications are enabled
+  if (pushNotificationService) {
+    ptyManager.on('sessionExited', (sessionId: string) => {
+      // Load session info to get details
+      const sessionInfo = sessionManager.loadSessionInfo(sessionId);
+      const exitCode = sessionInfo?.exitCode ?? 0;
+      const sessionName = sessionInfo?.name || `Session ${sessionId}`;
+
+      // Determine notification type based on exit code
+      const notificationType = exitCode === 0 ? 'session-exit' : 'session-error';
+      const title = exitCode === 0 ? 'Session Ended' : 'Session Ended with Errors';
+      const body =
+        exitCode === 0
+          ? `${sessionName} has finished.`
+          : `${sessionName} exited with code ${exitCode}.`;
+
+      pushNotificationService
+        .sendNotification({
+          type: notificationType,
+          title,
+          body,
+          icon: '/apple-touch-icon.png',
+          badge: '/favicon-32.png',
+          tag: `vibetunnel-${notificationType}-${sessionId}`,
+          requireInteraction: false,
+          data: {
+            type: notificationType,
+            sessionId,
+            sessionName,
+            exitCode,
+            timestamp: new Date().toISOString(),
+          },
+          actions: [
+            { action: 'view-logs', title: 'View Logs' },
+            { action: 'dismiss', title: 'Dismiss' },
+          ],
+        })
+        .catch((error) => {
+          logger.error('Failed to send session exit notification:', error);
+        });
     });
-    logger.debug('Connected bell event handler to PTY manager');
+    logger.debug('Connected session exit notifications to PTY manager');
+
+    // Connect command finished notifications
+    ptyManager.on('commandFinished', ({ sessionId, command, exitCode, duration, timestamp }) => {
+      const isClaudeCommand = command.toLowerCase().includes('claude');
+
+      // Enhanced logging for Claude commands
+      if (isClaudeCommand) {
+        logger.log(
+          chalk.magenta(
+            `📬 Server received Claude commandFinished event: sessionId=${sessionId}, command="${command}", exitCode=${exitCode}, duration=${duration}ms`
+          )
+        );
+      } else {
+        logger.debug(
+          `Server received commandFinished event for session ${sessionId}: "${command}"`
+        );
+      }
+
+      // Determine notification type based on exit code
+      const notificationType = exitCode === 0 ? 'command-finished' : 'command-error';
+      const title = exitCode === 0 ? 'Command Completed' : 'Command Failed';
+      const body =
+        exitCode === 0
+          ? `${command} completed successfully`
+          : `${command} failed with exit code ${exitCode}`;
+
+      // Format duration for display
+      const durationStr =
+        duration > 60000
+          ? `${Math.round(duration / 60000)}m ${Math.round((duration % 60000) / 1000)}s`
+          : `${Math.round(duration / 1000)}s`;
+
+      logger.debug(
+        `Sending push notification: type=${notificationType}, title="${title}", body="${body} (${durationStr})"`
+      );
+
+      pushNotificationService
+        .sendNotification({
+          type: notificationType,
+          title,
+          body: `${body} (${durationStr})`,
+          icon: '/apple-touch-icon.png',
+          badge: '/favicon-32.png',
+          tag: `vibetunnel-command-${sessionId}-${Date.now()}`,
+          requireInteraction: false,
+          data: {
+            type: notificationType,
+            sessionId,
+            command,
+            exitCode,
+            duration,
+            timestamp,
+          },
+          actions: [
+            { action: 'view-session', title: 'View Session' },
+            { action: 'dismiss', title: 'Dismiss' },
+          ],
+        })
+        .catch((error) => {
+          logger.error('Failed to send command finished notification:', error);
+        });
+    });
+    logger.debug('Connected command finished notifications to PTY manager');
+
+    // Connect Claude turn notifications
+    ptyManager.on('claudeTurn', (sessionId: string, sessionName: string) => {
+      logger.info(
+        `🔔 NOTIFICATION DEBUG: Sending push notification for Claude turn - sessionId: ${sessionId}`
+      );
+
+      pushNotificationService
+        .sendNotification({
+          type: 'claude-turn',
+          title: 'Claude Ready',
+          body: `${sessionName} is waiting for your input.`,
+          icon: '/apple-touch-icon.png',
+          badge: '/favicon-32.png',
+          tag: `vibetunnel-claude-turn-${sessionId}`,
+          requireInteraction: true,
+          data: {
+            type: 'claude-turn',
+            sessionId,
+            sessionName,
+            timestamp: new Date().toISOString(),
+          },
+          actions: [
+            { action: 'view-session', title: 'View Session' },
+            { action: 'dismiss', title: 'Dismiss' },
+          ],
+        })
+        .catch((error) => {
+          logger.error('Failed to send Claude turn notification:', error);
+        });
+    });
+    logger.debug('Connected Claude turn notifications to PTY manager');
   }
 
   // Mount authentication routes (no auth required)
@@ -603,6 +864,23 @@ export async function createApp(): Promise<AppInstance> {
   app.use('/api', createFileRoutes());
   logger.debug('Mounted file routes');
 
+  // Mount preferences routes
+  app.use('/api', createPreferencesRouter());
+  logger.debug('Mounted preferences routes');
+
+  // Mount repository routes
+  app.use('/api', createRepositoryRoutes());
+  logger.debug('Mounted repository routes');
+
+  // Mount config routes
+  app.use(
+    '/api',
+    createConfigRoutes({
+      configService,
+    })
+  );
+  logger.debug('Mounted config routes');
+
   // Mount push notification routes
   if (vapidManager) {
     app.use(
@@ -610,28 +888,22 @@ export async function createApp(): Promise<AppInstance> {
       createPushRoutes({
         vapidManager,
         pushNotificationService,
-        bellEventHandler: bellEventHandler ?? undefined,
       })
     );
     logger.debug('Mounted push notification routes');
   }
 
-  // Mount screencap routes
-  app.use('/', createScreencapRoutes());
-  logger.debug('Mounted screencap routes');
+  // Mount events router for SSE streaming
+  app.use('/api', createEventsRouter(ptyManager));
+  logger.debug('Mounted events routes');
 
-  // WebRTC configuration route
-  app.use('/api', createWebRTCConfigRouter());
-  logger.debug('Mounted WebRTC config routes');
-
-  // Initialize screencap service and control socket
+  // Initialize control socket
   try {
-    await initializeScreencap();
     await controlUnixHandler.start();
     logger.log(chalk.green('Control UNIX socket: READY'));
   } catch (error) {
-    logger.error('Failed to initialize screencap or control socket:', error);
-    logger.warn('Screen capture and Mac control features will not be available.');
+    logger.error('Failed to initialize control socket:', error);
+    logger.warn('Mac control features will not be available.');
     // Depending on the desired behavior, you might want to exit here
     // For now, we'll let the server continue without these features.
   }
@@ -642,11 +914,7 @@ export async function createApp(): Promise<AppInstance> {
     const parsedUrl = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
 
     // Handle WebSocket paths
-    if (
-      parsedUrl.pathname !== '/buffers' &&
-      parsedUrl.pathname !== '/ws/input' &&
-      parsedUrl.pathname !== '/ws/screencap-signal'
-    ) {
+    if (parsedUrl.pathname !== '/buffers' && parsedUrl.pathname !== '/ws/input') {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
       socket.destroy();
       return;
@@ -799,20 +1067,6 @@ export async function createApp(): Promise<AppInstance> {
       const userId = wsReq.userId || 'unknown';
 
       websocketInputHandler.handleConnection(ws, sessionId, userId);
-    } else if (pathname === '/ws/screencap-signal') {
-      logger.log('🖥️ Handling screencap WebSocket connection');
-      // Handle screencap WebRTC signaling from browser
-      const userId = wsReq.userId || 'unknown';
-      logger.log(`🖥️ Screencap WebSocket user: ${userId}`);
-
-      if (!controlUnixHandler) {
-        logger.error('❌ controlUnixHandler not initialized!');
-        ws.close();
-        return;
-      }
-
-      logger.log('✅ Passing connection to controlUnixHandler');
-      controlUnixHandler.handleBrowserConnection(ws);
     } else {
       logger.error(`❌ Unknown WebSocket path: ${pathname}`);
       ws.close();
@@ -959,6 +1213,7 @@ export async function createApp(): Promise<AppInstance> {
         isHQMode: config.isHQMode,
         hqClient,
         ptyManager,
+        pushNotificationService: pushNotificationService || undefined,
       });
       controlDirWatcher.start();
       logger.debug('Started control directory watcher');
@@ -970,7 +1225,7 @@ export async function createApp(): Promise<AppInstance> {
       // Start mDNS advertisement if enabled
       if (config.enableMDNS) {
         mdnsService.startAdvertising(actualPort).catch((err) => {
-          logger.error('Failed to start mDNS advertisement:', err);
+          logger.warn('Failed to start mDNS advertisement:', err);
         });
       } else {
         logger.debug('mDNS advertisement disabled');
@@ -984,6 +1239,7 @@ export async function createApp(): Promise<AppInstance> {
     wss,
     startServer,
     config,
+    configService,
     ptyManager,
     terminalManager,
     streamWatcher,
@@ -1003,6 +1259,10 @@ let serverStarted = false;
 export async function startVibeTunnelServer() {
   // Initialize logger if not already initialized (preserves debug mode from CLI)
   initLogger();
+
+  // Log diagnostic info if debug mode
+  if (process.env.DEBUG === 'true' || process.argv.includes('--debug')) {
+  }
 
   // Prevent multiple server instances
   if (serverStarted) {
@@ -1024,6 +1284,7 @@ export async function startVibeTunnelServer() {
     controlDirWatcher,
     activityMonitor,
     config,
+    configService,
   } = appInstance;
 
   // Update debug mode based on config or environment variable
@@ -1081,6 +1342,9 @@ export async function startVibeTunnelServer() {
       // Stop activity monitor
       activityMonitor.stop();
       logger.debug('Stopped activity monitor');
+      // Stop configuration service watcher
+      configService.stopWatching();
+      logger.debug('Stopped configuration service watcher');
 
       // Stop mDNS advertisement if it was started
       if (mdnsService.isActive()) {

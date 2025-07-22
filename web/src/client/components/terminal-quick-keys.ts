@@ -72,7 +72,9 @@ export class TerminalQuickKeys extends LitElement {
   @property({ type: Function }) onKeyPress?: (
     key: string,
     isModifier?: boolean,
-    isSpecial?: boolean
+    isSpecial?: boolean,
+    isToggle?: boolean,
+    pasteText?: string
   ) => void;
   @property({ type: Boolean }) visible = false;
   @property({ type: Number }) keyboardHeight = 0;
@@ -107,6 +109,29 @@ export class TerminalQuickKeys extends LitElement {
     // Consider landscape if width is greater than height
     // and width is more than 600px (typical phone landscape width)
     this.isLandscape = window.innerWidth > window.innerHeight && window.innerWidth > 600;
+  }
+
+  private getButtonSizeClass(label: string): string {
+    if (label.length >= 4) {
+      // Long text: compact with max-width constraint
+      return this.isLandscape ? 'px-0.5 py-1 flex-1 max-w-14' : 'px-0.5 py-1.5 flex-1 max-w-16';
+    } else if (label.length === 3) {
+      // Medium text: slightly more padding, larger max-width
+      return this.isLandscape ? 'px-1 py-1 flex-1 max-w-16' : 'px-1 py-1.5 flex-1 max-w-18';
+    } else {
+      // Short text: can grow freely
+      return this.isLandscape ? 'px-1 py-1 flex-1' : 'px-1 py-1.5 flex-1';
+    }
+  }
+
+  private getButtonFontClass(label: string): string {
+    if (label.length >= 4) {
+      return 'quick-key-btn-xs'; // 8px
+    } else if (label.length === 3) {
+      return 'quick-key-btn-small'; // 10px
+    } else {
+      return 'quick-key-btn-medium'; // 13px
+    }
   }
 
   updated(changedProperties: PropertyValues) {
@@ -194,6 +219,16 @@ export class TerminalQuickKeys extends LitElement {
     }
   }
 
+  private handlePasteImmediate(_e: Event) {
+    console.log('[QuickKeys] Paste button touched - delegating to paste handler');
+
+    // Always delegate to the main paste handler in direct-keyboard-manager
+    // This preserves user gesture context while keeping all clipboard logic in one place
+    if (this.onKeyPress) {
+      this.onKeyPress('Paste', false, false);
+    }
+  }
+
   private startKeyRepeat(key: string, isModifier: boolean, isSpecial: boolean) {
     // Only enable key repeat for arrow keys
     if (!key.startsWith('Arrow')) return;
@@ -243,17 +278,6 @@ export class TerminalQuickKeys extends LitElement {
   private renderStyles() {
     return html`
       <style>
-        /* Hide scrollbar */
-        .scrollbar-hide {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-          overflow-x: auto !important;
-          overflow-y: hidden;
-          -webkit-overflow-scrolling: touch;
-        }
-        .scrollbar-hide::-webkit-scrollbar {
-          display: none;
-        }
         
         /* Quick keys container - positioned above keyboard */
         .terminal-quick-keys-container {
@@ -268,18 +292,19 @@ export class TerminalQuickKeys extends LitElement {
           isolation: isolate;
           /* Smooth transition when keyboard appears/disappears */
           transition: bottom 0.3s ease-out;
+          background-color: rgb(var(--color-bg-secondary));
         }
         
         /* The actual bar with buttons */
         .quick-keys-bar {
-          background: #0a0a0a;
-          border-top: 1px solid #2a2a2a;
+          background: rgb(var(--color-bg-secondary));
+          border-top: 1px solid rgb(var(--color-border-base));
           padding: 0.5rem 0.25rem;
           /* Prevent iOS from adding its own styling */
           -webkit-appearance: none;
           appearance: none;
           /* Add shadow for visibility */
-          box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.5);
+          box-shadow: 0 -2px 10px rgb(var(--color-bg-secondary) / 0.5);
         }
         
         /* Quick key buttons */
@@ -294,23 +319,23 @@ export class TerminalQuickKeys extends LitElement {
         
         /* Modifier key styling */
         .modifier-key {
-          background-color: #141414;
-          border-color: #444;
+          background-color: rgb(var(--color-bg-tertiary));
+          border-color: rgb(var(--color-border-base));
         }
         
         .modifier-key:hover {
-          background-color: #1f1f1f;
+          background-color: rgb(var(--color-bg-secondary));
         }
         
         /* Active modifier styling */
         .modifier-key.active {
-          background-color: rgb(59, 130, 246);
-          border-color: rgb(59, 130, 246);
-          color: white;
+          background-color: rgb(var(--color-primary));
+          border-color: rgb(var(--color-primary));
+          color: rgb(var(--color-text-bright));
         }
         
         .modifier-key.active:hover {
-          background-color: rgb(37, 99, 235);
+          background-color: rgb(var(--color-primary-hover));
         }
         
         /* Arrow key styling */
@@ -319,25 +344,54 @@ export class TerminalQuickKeys extends LitElement {
           padding: 0.375rem 0.5rem;
         }
         
+        /* Medium font for short character buttons */
+        .quick-key-btn-medium {
+          font-size: 13px;
+        }
+        
+        /* Small font for mobile keyboard buttons */
+        .quick-key-btn-small {
+          font-size: 10px;
+        }
+        
+        /* Extra small font for long text buttons */
+        .quick-key-btn-xs {
+          font-size: 8px;
+        }
+        
+        /* Max width constraints for buttons */
+        .max-w-14 {
+          max-width: 3.5rem; /* 56px */
+        }
+        
+        .max-w-16 {
+          max-width: 4rem; /* 64px */
+        }
+        
+        .max-w-18 {
+          max-width: 4.5rem; /* 72px */
+        }
+        
+        
         /* Combo key styling (like ^C, ^Z) */
         .combo-key {
-          background-color: #141414;
-          border-color: #555;
+          background-color: rgb(var(--color-bg-tertiary));
+          border-color: rgb(var(--color-border-accent));
         }
         
         .combo-key:hover {
-          background-color: #1f1f1f;
+          background-color: rgb(var(--color-bg-secondary));
         }
         
         /* Special key styling (like ABC) */
         .special-key {
-          background-color: rgb(16, 185, 129);
-          border-color: rgb(16, 185, 129);
-          color: white;
+          background-color: rgb(var(--color-primary));
+          border-color: rgb(var(--color-primary));
+          color: rgb(var(--color-text-bright));
         }
         
         .special-key:hover {
-          background-color: rgb(5, 150, 105);
+          background-color: rgb(var(--color-primary-hover));
         }
         
         /* Function key styling */
@@ -351,22 +405,22 @@ export class TerminalQuickKeys extends LitElement {
         
         /* Toggle button styling */
         .toggle-key {
-          background-color: #1f1f1f;
-          border-color: #666;
+          background-color: rgb(var(--color-bg-secondary));
+          border-color: rgb(var(--color-border-accent));
         }
         
         .toggle-key:hover {
-          background-color: #2a2a2a;
+          background-color: rgb(var(--color-bg-tertiary));
         }
         
         .toggle-key.active {
-          background-color: rgb(16, 185, 129);
-          border-color: rgb(16, 185, 129);
-          color: white;
+          background-color: rgb(var(--color-primary));
+          border-color: rgb(var(--color-primary));
+          color: rgb(var(--color-text-bright));
         }
         
         .toggle-key.active:hover {
-          background-color: rgb(5, 150, 105);
+          background-color: rgb(var(--color-primary-hover));
         }
         
         /* Ctrl shortcut button styling */
@@ -378,27 +432,10 @@ export class TerminalQuickKeys extends LitElement {
           touch-action: manipulation;
         }
         
-        /* Landscape mode adjustments - reduce height/padding by 10% */
+        /* Landscape mode adjustments */
         @media (orientation: landscape) and (max-width: 926px) {
           .quick-keys-bar {
-            padding: 0.45rem 0.225rem; /* 10% less than 0.5rem 0.25rem */
-          }
-          
-          .quick-key-btn {
-            padding: 0.3375rem 0.45rem; /* 10% less than py-1.5 (0.375rem) px-0.5 (0.125rem) */
-          }
-          
-          .arrow-key {
-            padding: 0.3375rem 0.45rem; /* 10% less than 0.375rem 0.5rem */
-          }
-          
-          .ctrl-shortcut-btn, .func-key-btn {
-            padding: 0.3375rem 0.45rem; /* 10% less than py-1.5 px-0.5 */
-          }
-          
-          /* Row 3 buttons with py-1 become 10% less */
-          .quick-keys-bar .flex.gap-1.justify-center.text-xs button {
-            padding: 0.225rem 0.45rem; /* 10% less than py-1 (0.25rem) px-0.5 */
+            padding: 0.45rem 0.225rem;
           }
         }
       </style>
@@ -421,13 +458,13 @@ export class TerminalQuickKeys extends LitElement {
       >
         <div class="quick-keys-bar">
           <!-- Row 1 -->
-          <div class="flex gap-1 justify-center mb-1">
+          <div class="flex gap-0.5 justify-center mb-1">
             ${TERMINAL_QUICK_KEYS.filter((k) => k.row === 1).map(
               ({ key, label, modifier, arrow, toggle }) => html`
                 <button
                   type="button"
                   tabindex="-1"
-                  class="quick-key-btn flex-1 min-w-0 px-0.5 ${this.isLandscape ? 'py-1' : 'py-1.5'} bg-dark-bg-tertiary text-dark-text text-xs font-mono rounded border border-dark-border hover:bg-dark-surface hover:border-accent-green transition-all whitespace-nowrap ${modifier ? 'modifier-key' : ''} ${arrow ? 'arrow-key' : ''} ${toggle ? 'toggle-key' : ''} ${toggle && ((key === 'CtrlExpand' && this.showCtrlKeys) || (key === 'F' && this.showFunctionKeys)) ? 'active' : ''} ${modifier && key === 'Option' && this.activeModifiers.has('Option') ? 'active' : ''}"
+                  class="quick-key-btn ${this.getButtonFontClass(label)} min-w-0 ${this.getButtonSizeClass(label)} bg-tertiary text-primary font-mono rounded border border-base hover:bg-surface hover:border-primary transition-all whitespace-nowrap ${modifier ? 'modifier-key' : ''} ${arrow ? 'arrow-key' : ''} ${toggle ? 'toggle-key' : ''} ${toggle && ((key === 'CtrlExpand' && this.showCtrlKeys) || (key === 'F' && this.showFunctionKeys)) ? 'active' : ''} ${modifier && key === 'Option' && this.activeModifiers.has('Option') ? 'active' : ''}"
                   @mousedown=${(e: Event) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -473,13 +510,13 @@ export class TerminalQuickKeys extends LitElement {
             this.showCtrlKeys
               ? html`
               <!-- Ctrl shortcuts row -->
-              <div class="flex gap-1 justify-between flex-wrap mb-1">
+              <div class="flex gap-0.5 justify-between flex-wrap mb-1">
                 ${CTRL_SHORTCUTS.map(
                   ({ key, label, combo, special }) => html`
                     <button
                       type="button"
                       tabindex="-1"
-                      class="ctrl-shortcut-btn flex-1 min-w-0 px-0.5 ${this.isLandscape ? 'py-1' : 'py-1.5'} bg-dark-bg-tertiary text-dark-text text-xs font-mono rounded border border-dark-border hover:bg-dark-surface hover:border-accent-green transition-all whitespace-nowrap ${combo ? 'combo-key' : ''} ${special ? 'special-key' : ''}"
+                      class="ctrl-shortcut-btn ${this.getButtonFontClass(label)} min-w-0 ${this.getButtonSizeClass(label)} bg-tertiary text-primary font-mono rounded border border-base hover:bg-surface hover:border-primary transition-all whitespace-nowrap ${combo ? 'combo-key' : ''} ${special ? 'special-key' : ''}"
                       @mousedown=${(e: Event) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -508,13 +545,13 @@ export class TerminalQuickKeys extends LitElement {
               : this.showFunctionKeys
                 ? html`
               <!-- Function keys row -->
-              <div class="flex gap-1 justify-between mb-1">
+              <div class="flex gap-0.5 justify-between mb-1">
                 ${FUNCTION_KEYS.map(
                   ({ key, label }) => html`
                     <button
                       type="button"
                       tabindex="-1"
-                      class="func-key-btn flex-1 min-w-0 px-0.5 ${this.isLandscape ? 'py-1' : 'py-1.5'} bg-dark-bg-tertiary text-dark-text text-xs font-mono rounded border border-dark-border hover:bg-dark-surface hover:border-accent-green transition-all whitespace-nowrap"
+                      class="func-key-btn ${this.getButtonFontClass(label)} min-w-0 ${this.getButtonSizeClass(label)} bg-tertiary text-primary font-mono rounded border border-base hover:bg-surface hover:border-primary transition-all whitespace-nowrap"
                       @mousedown=${(e: Event) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -542,13 +579,13 @@ export class TerminalQuickKeys extends LitElement {
             `
                 : html`
               <!-- Regular row 2 -->
-              <div class="flex gap-1 justify-center mb-1">
+              <div class="flex gap-0.5 justify-center mb-1">
                 ${TERMINAL_QUICK_KEYS.filter((k) => k.row === 2).map(
                   ({ key, label, modifier, combo, special, toggle }) => html`
                     <button
                       type="button"
                       tabindex="-1"
-                      class="quick-key-btn flex-1 min-w-0 px-0.5 ${this.isLandscape ? 'py-1' : 'py-1.5'} bg-dark-bg-tertiary text-dark-text text-xs font-mono rounded border border-dark-border hover:bg-dark-surface hover:border-accent-green transition-all whitespace-nowrap ${modifier ? 'modifier-key' : ''} ${combo ? 'combo-key' : ''} ${special ? 'special-key' : ''} ${toggle ? 'toggle-key' : ''} ${toggle && this.showFunctionKeys ? 'active' : ''}"
+                      class="quick-key-btn ${this.getButtonFontClass(label)} min-w-0 ${this.getButtonSizeClass(label)} bg-tertiary text-primary font-mono rounded border border-base hover:bg-surface hover:border-primary transition-all whitespace-nowrap ${modifier ? 'modifier-key' : ''} ${combo ? 'combo-key' : ''} ${special ? 'special-key' : ''} ${toggle ? 'toggle-key' : ''} ${toggle && this.showFunctionKeys ? 'active' : ''}"
                       @mousedown=${(e: Event) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -560,7 +597,11 @@ export class TerminalQuickKeys extends LitElement {
                       @touchend=${(e: Event) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        this.handleKeyPress(key, modifier || combo, special, toggle, e);
+                        if (key === 'Paste') {
+                          this.handlePasteImmediate(e);
+                        } else {
+                          this.handleKeyPress(key, modifier || combo, special, toggle, e);
+                        }
                       }}
                       @click=${(e: MouseEvent) => {
                         if (e.detail !== 0) {
@@ -577,13 +618,13 @@ export class TerminalQuickKeys extends LitElement {
           }
           
           <!-- Row 3 - Additional special characters (always visible) -->
-          <div class="flex gap-1 justify-center text-xs">
+          <div class="flex gap-0.5 justify-center">
             ${TERMINAL_QUICK_KEYS.filter((k) => k.row === 3).map(
               ({ key, label, modifier, combo, special }) => html`
                 <button
                   type="button"
                   tabindex="-1"
-                  class="quick-key-btn flex-1 min-w-0 px-0.5 ${this.isLandscape ? 'py-0.5' : 'py-1'} bg-dark-bg-tertiary text-dark-text text-xs font-mono rounded border border-dark-border hover:bg-dark-surface hover:border-accent-green transition-all whitespace-nowrap ${modifier ? 'modifier-key' : ''} ${combo ? 'combo-key' : ''} ${special ? 'special-key' : ''} ${modifier && key === 'Option' && this.activeModifiers.has('Option') ? 'active' : ''}"
+                  class="quick-key-btn ${this.getButtonFontClass(label)} min-w-0 ${this.getButtonSizeClass(label)} bg-tertiary text-primary font-mono rounded border border-base hover:bg-surface hover:border-primary transition-all whitespace-nowrap ${modifier ? 'modifier-key' : ''} ${combo ? 'combo-key' : ''} ${special ? 'special-key' : ''} ${modifier && key === 'Option' && this.activeModifiers.has('Option') ? 'active' : ''}"
                   @mousedown=${(e: Event) => {
                     e.preventDefault();
                     e.stopPropagation();

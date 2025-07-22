@@ -55,29 +55,39 @@ class ServerManager {
     static let shared = ServerManager()
 
     var port: String {
-        get { UserDefaults.standard.string(forKey: "serverPort") ?? "4020" }
-        set { UserDefaults.standard.set(newValue, forKey: "serverPort") }
+        get { UserDefaults.standard.string(forKey: UserDefaultsKeys.serverPort) ?? String(NetworkConstants.defaultPort)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: UserDefaultsKeys.serverPort) }
     }
 
     var bindAddress: String {
         get {
-            let mode = DashboardAccessMode(
-                rawValue: UserDefaults.standard.string(forKey: "dashboardAccessMode") ?? ""
-            ) ??
-                .localhost
+            // Get the raw value from UserDefaults, defaulting to the app default
+            let rawValue = UserDefaults.standard.string(forKey: UserDefaultsKeys.dashboardAccessMode) ?? AppConstants
+                .Defaults
+                .dashboardAccessMode
+            let mode = DashboardAccessMode(rawValue: rawValue) ?? .network
+
+            // Log for debugging
+            logger
+                .debug(
+                    "bindAddress getter: rawValue='\(rawValue)', mode=\(mode.rawValue), bindAddress=\(mode.bindAddress)"
+                )
+
             return mode.bindAddress
         }
         set {
             // Find the mode that matches this bind address
             if let mode = DashboardAccessMode.allCases.first(where: { $0.bindAddress == newValue }) {
-                UserDefaults.standard.set(mode.rawValue, forKey: "dashboardAccessMode")
+                UserDefaults.standard.set(mode.rawValue, forKey: UserDefaultsKeys.dashboardAccessMode)
+                logger.debug("bindAddress setter: set mode=\(mode.rawValue) for bindAddress=\(newValue)")
             }
         }
     }
 
     private var cleanupOnStartup: Bool {
-        get { UserDefaults.standard.bool(forKey: "cleanupOnStartup") }
-        set { UserDefaults.standard.set(newValue, forKey: "cleanupOnStartup") }
+        get { UserDefaults.standard.bool(forKey: UserDefaultsKeys.cleanupOnStartup) }
+        set { UserDefaults.standard.set(newValue, forKey: UserDefaultsKeys.cleanupOnStartup) }
     }
 
     private(set) var bunServer: BunServer?
@@ -92,7 +102,7 @@ class ServerManager {
     /// Last crash time for crash rate detection
     private var lastCrashTime: Date?
 
-    private let logger = Logger(subsystem: "sh.vibetunnel.vibetunnel", category: "ServerManager")
+    private let logger = Logger(subsystem: BundleIdentifiers.main, category: "ServerManager")
     private let powerManager = PowerManagementService.shared
 
     private init() {
@@ -166,7 +176,7 @@ class ServerManager {
         }
 
         // First check if port is truly available by trying to bind to it
-        let portNumber = Int(self.port) ?? 4_020
+        let portNumber = Int(self.port) ?? NetworkConstants.defaultPort
 
         let canBind = await PortConflictResolver.shared.canBindToPort(portNumber)
         if !canBind {
@@ -195,7 +205,7 @@ class ServerManager {
                 logger.error("Port \(self.port) is used by external app: \(appName)")
                 lastError = ServerManagerError.portInUseByApp(
                     appName: appName,
-                    port: Int(self.port) ?? 4_020,
+                    port: Int(self.port) ?? NetworkConstants.defaultPort,
                     alternatives: conflict.alternativePorts
                 )
                 return
@@ -209,7 +219,9 @@ class ServerManager {
         do {
             let server = BunServer()
             server.port = port
-            server.bindAddress = bindAddress
+            let currentBindAddress = bindAddress
+            server.bindAddress = currentBindAddress
+            logger.info("Starting server with port=\(self.port), bindAddress=\(currentBindAddress)")
 
             // Set up crash handler
             server.onCrash = { [weak self] exitCode in
@@ -233,6 +245,9 @@ class ServerManager {
                 lastError = nil
                 // Reset crash counter on successful start
                 consecutiveCrashes = 0
+
+                // Start notification service
+                await NotificationService.shared.start()
             } else {
                 logger.error("Server started but not in running state")
                 isRunning = false
@@ -243,17 +258,15 @@ class ServerManager {
 
             logger.info("Started server on port \(self.port)")
 
-            // This allows the screencap API to be available for queries (like listing
-            // windows/displays) without triggering the permission dialog. The permission
-            // dialog only appears when the user actually starts screen capture.
-            if AppConstants.boolValue(for: AppConstants.UserDefaultsKeys.enableScreencapService) {
-                self.logger.info("Screencap service enabled, initializing...")
-                // Ensure the singleton is created and ready to receive messages.
-                // This will in turn initialize the WebRTCManager and register its handlers.
-                _ = ScreencapService.shared
-            } else {
-                self.logger.info("Screencap service disabled by user preference")
-            }
+            // Initialize terminal control handler
+            // The handler registers itself with SharedUnixSocketManager during init
+            _ = TerminalControlHandler.shared
+            
+            // Initialize notification control handler
+            _ = NotificationControlHandler.shared
+            
+            // Note: SystemControlHandler is initialized in AppDelegate via
+            // SharedUnixSocketManager.initializeSystemHandler()
 
             // Pass the local auth token to SessionMonitor
             SessionMonitor.shared.setLocalAuthToken(server.localToken)
@@ -288,6 +301,9 @@ class ServerManager {
 
         isRunning = false
 
+        // Post notification that server state has changed
+        NotificationCenter.default.post(name: .serverStateChanged, object: nil)
+
         // Clear the auth token from SessionMonitor
         SessionMonitor.shared.setLocalAuthToken(nil)
 
@@ -308,7 +324,7 @@ class ServerManager {
         await stop()
 
         // Wait with exponential backoff for port to be available
-        let portNumber = Int(self.port) ?? 4_020
+        let portNumber = Int(self.port) ?? NetworkConstants.defaultPort
         var retries = 0
         let maxRetries = 5
 
@@ -349,7 +365,8 @@ class ServerManager {
 
         do {
             // Create URL for cleanup endpoint
-            guard let url = URL(string: "http://localhost:\(self.port)/api/cleanup-exited") else {
+            guard let url = URL(string: "\(URLConstants.localServerBase):\(self.port)\(APIEndpoints.cleanupExited)")
+            else {
                 logger.warning("Failed to create cleanup URL")
                 return
             }
@@ -359,7 +376,7 @@ class ServerManager {
 
             // Add local auth token if available
             if let server = bunServer {
-                request.setValue(server.localToken, forHTTPHeaderField: "X-VibeTunnel-Local")
+                request.setValue(server.localToken, forHTTPHeaderField: NetworkConstants.localAuthHeader)
             }
 
             // Make the cleanup request
@@ -451,7 +468,9 @@ class ServerManager {
             logger.info("Port \(self.port) is in use, checking for conflicts...")
 
             // Check for port conflicts
-            if let conflict = await PortConflictResolver.shared.detectConflict(on: Int(self.port) ?? 4_020) {
+            if let conflict = await PortConflictResolver.shared
+                .detectConflict(on: Int(self.port) ?? NetworkConstants.defaultPort)
+            {
                 logger.warning("Found port conflict: \(conflict.process.name) (PID: \(conflict.process.pid))")
 
                 // Try to resolve the conflict
@@ -474,7 +493,7 @@ class ServerManager {
                 // Port might still be in TIME_WAIT state, wait with backoff
                 logger.info("Port may be in TIME_WAIT state, checking availability...")
 
-                let portNumber = Int(self.port) ?? 4_020
+                let portNumber = Int(self.port) ?? NetworkConstants.defaultPort
                 var retries = 0
                 let maxRetries = 5
 
@@ -559,9 +578,9 @@ class ServerManager {
     /// Add authentication headers to a request
     func authenticate(request: inout URLRequest) throws {
         guard let server = bunServer else {
-            throw ServerError.startupFailed("Server not running")
+            throw ServerError.startupFailed(ErrorMessages.serverNotRunning)
         }
-        request.setValue(server.localToken, forHTTPHeaderField: "X-VibeTunnel-Local")
+        request.setValue(server.localToken, forHTTPHeaderField: NetworkConstants.localAuthHeader)
     }
 }
 

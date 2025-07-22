@@ -65,7 +65,7 @@ describe('SessionCreateForm', () => {
   describe('initialization', () => {
     it('should create component with default state', () => {
       expect(element).toBeDefined();
-      expect(element.workingDir).toBe('~/');
+      expect(element.workingDir).toBe('~/Documents');
       expect(element.command).toBe('zsh');
       expect(element.sessionName).toBe('');
       expect(element.isCreating).toBe(false);
@@ -468,6 +468,407 @@ describe('SessionCreateForm', () => {
       // When isCreating is true, cancel button should be disabled
       // Verify the state since we can't reliably find buttons
       expect(element.isCreating).toBe(true);
+    });
+  });
+
+  describe('spawn window toggle visibility', () => {
+    it('should hide spawn window toggle when Mac app is not connected', async () => {
+      // Mock server status endpoint to return Mac app not connected
+      fetchMock.mockResponse('/api/server/status', {
+        macAppConnected: false,
+        isHQMode: false,
+        version: '1.0.0',
+      });
+
+      // Create new element to trigger server status check
+      const newElement = await fixture<SessionCreateForm>(html`
+        <session-create-form .authClient=${mockAuthClient} .visible=${true}></session-create-form>
+      `);
+
+      // Wait for async operations to complete
+      await waitForAsync();
+      await newElement.updateComplete;
+
+      // Check that spawn window toggle is not rendered
+      const spawnToggle = newElement.querySelector('[data-testid="spawn-window-toggle"]');
+      expect(spawnToggle).toBeFalsy();
+
+      // Verify server status was checked
+      const statusCall = fetchMock.getCalls().find((call) => call[0] === '/api/server/status');
+      expect(statusCall).toBeTruthy();
+
+      newElement.remove();
+    });
+
+    it('should show spawn window toggle when Mac app is connected', async () => {
+      // Clear existing mocks
+      fetchMock.clear();
+
+      // Mock auth config endpoint
+      fetchMock.mockResponse('/api/auth/config', {
+        providers: [],
+        isPasswordlessSupported: false,
+      });
+
+      // Mock config endpoint
+      fetchMock.mockResponse('/api/config', {
+        repositoryBasePath: '~/',
+        serverConfigured: true,
+        quickStartCommands: [],
+      });
+
+      // Mock server status endpoint to return Mac app connected
+      fetchMock.mockResponse('/api/server/status', {
+        macAppConnected: true,
+        isHQMode: false,
+        version: '1.0.0',
+      });
+
+      // Create new element to trigger server status check
+      const newElement = await fixture<SessionCreateForm>(html`
+        <session-create-form .authClient=${mockAuthClient} .visible=${true}></session-create-form>
+      `);
+
+      // Wait for async operations to complete
+      await waitForAsync(200);
+      await newElement.updateComplete;
+
+      // Force the component to check server status
+      // @ts-expect-error - accessing private method for testing
+      await newElement.checkServerStatus();
+      await waitForAsync(100);
+      await newElement.updateComplete;
+
+      // First check if Options section is expanded
+      const optionsButton = newElement.querySelector('#session-options-button');
+
+      if (optionsButton) {
+        optionsButton.click();
+        await newElement.updateComplete;
+      }
+
+      // Check that spawn window toggle is rendered
+      const spawnToggle = newElement.querySelector('[data-testid="spawn-window-toggle"]');
+      expect(spawnToggle).toBeTruthy();
+
+      newElement.remove();
+    });
+
+    it('should re-check server status when form becomes visible', async () => {
+      // Initial status check on creation
+      fetchMock.mockResponse('/api/server/status', {
+        macAppConnected: false,
+        isHQMode: false,
+        version: '1.0.0',
+      });
+
+      // Make form initially invisible
+      element.visible = false;
+      await element.updateComplete;
+
+      // Clear previous calls
+      fetchMock.clear();
+
+      // Make form visible again
+      element.visible = true;
+      await element.updateComplete;
+      await waitForAsync();
+
+      // Verify server status was checked again
+      const statusCall = fetchMock.getCalls().find((call) => call[0] === '/api/server/status');
+      expect(statusCall).toBeTruthy();
+    });
+
+    it('should not include spawn_terminal in request when Mac app is not connected', async () => {
+      // Mock server status to return Mac app not connected
+      fetchMock.mockResponse('/api/server/status', {
+        macAppConnected: false,
+        isHQMode: false,
+        version: '1.0.0',
+      });
+
+      // Create new element
+      const newElement = await fixture<SessionCreateForm>(html`
+        <session-create-form .authClient=${mockAuthClient} .visible=${true}></session-create-form>
+      `);
+
+      await waitForAsync();
+      await newElement.updateComplete;
+
+      // Mock session creation endpoint
+      fetchMock.mockResponse('/api/sessions', {
+        sessionId: 'test-123',
+      });
+
+      // Set spawn window to true (simulating saved preference)
+      newElement.spawnWindow = true;
+      newElement.command = 'zsh';
+      newElement.workingDir = '~/';
+      await newElement.updateComplete;
+
+      // Create session
+      await newElement.handleCreate();
+      await waitForAsync();
+
+      // Check that spawn_terminal was false in the request
+      const sessionCall = fetchMock.getCalls().find((call) => call[0] === '/api/sessions');
+      expect(sessionCall).toBeTruthy();
+
+      const requestBody = JSON.parse((sessionCall?.[1]?.body as string) || '{}');
+      expect(requestBody.spawn_terminal).toBe(false);
+      // Also verify that terminal dimensions were included for web session
+      expect(requestBody.cols).toBe(120);
+      expect(requestBody.rows).toBe(30);
+
+      newElement.remove();
+    });
+
+    it('should include spawn_terminal in request when Mac app is connected and toggle is on', async () => {
+      // Mock server status to return Mac app connected
+      fetchMock.mockResponse('/api/server/status', {
+        macAppConnected: true,
+        isHQMode: false,
+        version: '1.0.0',
+      });
+
+      // Create new element
+      const newElement = await fixture<SessionCreateForm>(html`
+        <session-create-form .authClient=${mockAuthClient} .visible=${true}></session-create-form>
+      `);
+
+      await waitForAsync();
+      await newElement.updateComplete;
+
+      // Mock session creation endpoint
+      fetchMock.mockResponse('/api/sessions', {
+        sessionId: 'test-123',
+      });
+
+      // Set spawn window to true
+      newElement.spawnWindow = true;
+      newElement.command = 'zsh';
+      newElement.workingDir = '~/';
+      await newElement.updateComplete;
+
+      // Create session
+      await newElement.handleCreate();
+      await waitForAsync();
+
+      // Check that spawn_terminal was true in the request
+      const sessionCall = fetchMock.getCalls().find((call) => call[0] === '/api/sessions');
+      expect(sessionCall).toBeTruthy();
+
+      const requestBody = JSON.parse((sessionCall?.[1]?.body as string) || '{}');
+      expect(requestBody.spawn_terminal).toBe(true);
+
+      newElement.remove();
+    });
+
+    it('should handle missing authClient gracefully', async () => {
+      // Create element without authClient
+      const newElement = await fixture<SessionCreateForm>(html`
+        <session-create-form .visible=${true}></session-create-form>
+      `);
+
+      // Wait for async operations
+      await waitForAsync();
+      await newElement.updateComplete;
+
+      // Verify that macAppConnected defaults to false
+      expect(newElement.macAppConnected).toBe(false);
+
+      // The component should log a warning but not crash
+      // No need to check fetch calls since defensive check prevents them
+
+      newElement.remove();
+    });
+  });
+
+  describe('quick start editor integration', () => {
+    beforeEach(async () => {
+      // Import quick-start-editor component
+      await import('./quick-start-editor');
+
+      // Remove the existing element created by the outer beforeEach
+      element.remove();
+
+      // Clear fetch mock and set up new responses
+      fetchMock.clear();
+
+      // Mock config endpoint with quick start commands
+      fetchMock.mockResponse('/api/config', {
+        repositoryBasePath: '~/',
+        serverConfigured: true,
+        quickStartCommands: [
+          { name: '✨ claude', command: 'claude' },
+          { command: 'zsh' },
+          { name: '▶️ pnpm run dev', command: 'pnpm run dev' },
+        ],
+      });
+
+      // Mock server status
+      fetchMock.mockResponse('/api/server/status', {
+        macAppConnected: false,
+        isHQMode: false,
+        version: '1.0.0',
+      });
+
+      // Create new element with proper mocks
+      element = await fixture<SessionCreateForm>(html`
+        <session-create-form .authClient=${mockAuthClient} .visible=${true}></session-create-form>
+      `);
+
+      await element.updateComplete;
+    });
+
+    it('should render quick start editor component', async () => {
+      await waitForAsync();
+      await element.updateComplete;
+
+      const quickStartEditor = element.querySelector('quick-start-editor');
+      expect(quickStartEditor).toBeTruthy();
+    });
+
+    it('should pass commands to quick start editor', async () => {
+      await waitForAsync();
+      await element.updateComplete;
+
+      const quickStartEditor = element.querySelector('quick-start-editor');
+      expect(quickStartEditor?.commands).toEqual([
+        { name: '✨ claude', command: 'claude' },
+        { command: 'zsh' },
+        { name: '▶️ pnpm run dev', command: 'pnpm run dev' },
+      ]);
+    });
+
+    it('should handle quick-start-changed event', async () => {
+      await waitForAsync();
+      await element.updateComplete;
+
+      const newCommands = [{ command: 'python3' }, { name: '🚀 node', command: 'node' }];
+
+      // Get the quick start editor element
+      const quickStartEditor = element.querySelector('quick-start-editor');
+      expect(quickStartEditor).toBeTruthy();
+
+      // Dispatch event from the quick start editor element (not the form)
+      const event = new CustomEvent('quick-start-changed', {
+        detail: newCommands,
+        bubbles: true,
+        composed: true,
+      });
+      quickStartEditor?.dispatchEvent(event);
+
+      await waitForAsync(100); // Give more time for async operations
+
+      // Check PUT request was made
+      const calls = fetchMock.getCalls();
+      const putCall = calls.find((call) => call[0] === '/api/config' && call[1]?.method === 'PUT');
+
+      if (!putCall) {
+        console.log(
+          'All fetch calls:',
+          calls.map((c) => ({ url: c[0], method: c[1]?.method }))
+        );
+      }
+
+      expect(putCall).toBeTruthy();
+
+      if (putCall) {
+        const requestBody = JSON.parse((putCall[1]?.body as string) || '{}');
+        expect(requestBody).toEqual({
+          quickStartCommands: newCommands,
+        });
+      }
+    });
+
+    it('should include auth header when saving quick start commands', async () => {
+      await waitForAsync();
+      await element.updateComplete;
+
+      const newCommands = [{ command: 'bash' }];
+
+      // Get the quick start editor element
+      const quickStartEditor = element.querySelector('quick-start-editor');
+      expect(quickStartEditor).toBeTruthy();
+
+      // Dispatch event from the quick start editor element
+      const event = new CustomEvent('quick-start-changed', {
+        detail: newCommands,
+        bubbles: true,
+        composed: true,
+      });
+      quickStartEditor?.dispatchEvent(event);
+
+      await waitForAsync(100); // Give more time for async operations
+
+      // Check auth header was included
+      const putCall = fetchMock
+        .getCalls()
+        .find((call) => call[0] === '/api/config' && call[1]?.method === 'PUT');
+      expect(putCall).toBeTruthy();
+      expect(putCall?.[1]?.headers).toEqual({
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-token',
+      });
+    });
+
+    it('should handle save error gracefully', async () => {
+      await waitForAsync();
+      await element.updateComplete;
+
+      // Mock the PUT endpoint to return error
+      fetchMock.mockResponse('/api/config', { error: 'Failed to save' }, { status: 500 });
+
+      const originalCommands = [...element.quickStartCommands];
+      const newCommands = [{ command: 'invalid' }];
+
+      // Dispatch event
+      const event = new CustomEvent('quick-start-changed', {
+        detail: newCommands,
+        bubbles: true,
+      });
+      element.dispatchEvent(event);
+
+      await waitForAsync();
+
+      // Commands should not be updated on error
+      expect(element.quickStartCommands).toEqual(originalCommands);
+    });
+
+    it('should load quick start commands from server on init', async () => {
+      // Check that config endpoint was called
+      const configCall = fetchMock.getCalls().find((call) => call[0] === '/api/config');
+      expect(configCall).toBeTruthy();
+
+      // Check commands were loaded
+      expect(element.quickStartCommands).toEqual([
+        { label: '✨ claude', command: 'claude' },
+        { label: 'zsh', command: 'zsh' },
+        { label: '▶️ pnpm run dev', command: 'pnpm run dev' },
+      ]);
+    });
+
+    it('should use default commands if server config fails', async () => {
+      // Clear existing calls
+      fetchMock.clear();
+
+      // Mock config endpoint to fail
+      fetchMock.mockResponse('/api/config', { error: 'Server error' }, { status: 500 });
+
+      // Create new element
+      const newElement = await fixture<SessionCreateForm>(html`
+        <session-create-form .authClient=${mockAuthClient} .visible=${true}></session-create-form>
+      `);
+
+      await waitForAsync();
+      await newElement.updateComplete;
+
+      // Should have default commands
+      expect(newElement.quickStartCommands.length).toBeGreaterThan(0);
+      expect(newElement.quickStartCommands.some((cmd) => cmd.command === 'zsh')).toBe(true);
+
+      newElement.remove();
     });
   });
 });

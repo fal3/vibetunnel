@@ -3,7 +3,7 @@
  */
 
 export type ControlMessageType = 'request' | 'response' | 'event';
-export type ControlCategory = 'terminal' | 'screencap' | 'git' | 'system';
+export type ControlCategory = 'terminal' | 'git' | 'system' | 'notification';
 
 export interface ControlMessage {
   id: string;
@@ -12,6 +12,7 @@ export interface ControlMessage {
   action: string;
   payload?: unknown;
   sessionId?: string;
+  userId?: string;
   error?: string;
 }
 
@@ -25,20 +26,23 @@ export interface TerminalSpawnRequest {
 
 export interface TerminalSpawnResponse {
   success: boolean;
+  pid?: number;
   error?: string;
 }
 
-// Screen capture control actions
-export interface ScreenCaptureApiRequest {
-  sessionId: string;
-  method: string;
-  endpoint: string;
-  data?: unknown;
+// System control payloads
+export interface SystemReadyEvent {
+  timestamp: number;
+  version?: string;
 }
 
-export interface ScreenCaptureWebRTCSignal {
-  sessionId: string;
-  data: unknown;
+export interface SystemPingRequest {
+  timestamp: number;
+}
+
+export interface SystemPingResponse {
+  status: string;
+  timestamp: number;
 }
 
 // Helper to create control messages

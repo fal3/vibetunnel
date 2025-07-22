@@ -10,6 +10,7 @@ enum GitApp: String, CaseIterable {
     case fork = "Fork"
     case githubDesktop = "GitHub Desktop"
     case gitup = "GitUp"
+    case juxtaCode = "JuxtaCode"
     case sourcetree = "SourceTree"
     case sublimeMerge = "Sublime Merge"
     case tower = "Tower"
@@ -19,23 +20,25 @@ enum GitApp: String, CaseIterable {
     var bundleIdentifier: String {
         switch self {
         case .cursor:
-            "com.todesktop.230313mzl4w4u92"
+            BundleIdentifiers.cursor
         case .fork:
-            "com.DanPristupov.Fork"
+            BundleIdentifiers.fork
         case .githubDesktop:
-            "com.github.GitHubClient"
+            BundleIdentifiers.githubDesktop
         case .gitup:
-            "co.gitup.mac"
+            BundleIdentifiers.gitup
+        case .juxtaCode:
+            BundleIdentifiers.juxtaCode
         case .sourcetree:
-            "com.torusknot.SourceTreeNotMAS"
+            BundleIdentifiers.sourcetree
         case .sublimeMerge:
-            "com.sublimemerge"
+            BundleIdentifiers.sublimeMerge
         case .tower:
-            "com.fournova.Tower3"
+            BundleIdentifiers.tower
         case .vscode:
-            "com.microsoft.VSCode"
+            BundleIdentifiers.vscode
         case .windsurf:
-            "com.codeiumapp.windsurf"
+            BundleIdentifiers.windsurf
         }
     }
 
@@ -46,6 +49,7 @@ enum GitApp: String, CaseIterable {
         case .fork: 75
         case .githubDesktop: 90
         case .gitup: 60
+        case .juxtaCode: 82
         case .sourcetree: 80
         case .sublimeMerge: 85
         case .tower: 100
@@ -84,7 +88,7 @@ enum GitApp: String, CaseIterable {
 @Observable
 final class GitAppLauncher {
     static let shared = GitAppLauncher()
-    private let logger = Logger(subsystem: "sh.vibetunnel.VibeTunnel", category: "GitAppLauncher")
+    private let logger = Logger(subsystem: BundleIdentifiers.main, category: "GitAppLauncher")
 
     private init() {
         performFirstRunAutoDetection()
@@ -109,13 +113,13 @@ final class GitAppLauncher {
     }
 
     func verifyPreferredGitApp() {
-        let currentPreference = UserDefaults.standard.string(forKey: "preferredGitApp")
+        let currentPreference = AppConstants.getPreferredGitApp()
         if let preference = currentPreference,
            let gitApp = GitApp(rawValue: preference),
            !gitApp.isInstalled
         {
             // If the preferred app is no longer installed, clear the preference
-            UserDefaults.standard.removeObject(forKey: "preferredGitApp")
+            AppConstants.setPreferredGitApp(nil)
         }
     }
 
@@ -123,7 +127,7 @@ final class GitAppLauncher {
 
     private func performFirstRunAutoDetection() {
         // Check if git app preference has already been set
-        let hasSetPreference = UserDefaults.standard.object(forKey: "preferredGitApp") != nil
+        let hasSetPreference = AppConstants.getPreferredGitApp() != nil
 
         if !hasSetPreference {
             logger.info("First run detected, auto-detecting preferred Git app")
@@ -131,7 +135,7 @@ final class GitAppLauncher {
             // Check installed git apps
             let installedGitApps = GitApp.installed
             if let bestGitApp = installedGitApps.max(by: { $0.detectionPriority < $1.detectionPriority }) {
-                UserDefaults.standard.set(bestGitApp.rawValue, forKey: "preferredGitApp")
+                AppConstants.setPreferredGitApp(bestGitApp.rawValue)
                 logger.info("Auto-detected and set preferred Git app to: \(bestGitApp.rawValue)")
             }
         }
@@ -139,7 +143,7 @@ final class GitAppLauncher {
 
     private func getValidGitApp() -> GitApp {
         // Read the current preference
-        if let currentPreference = UserDefaults.standard.string(forKey: "preferredGitApp"),
+        if let currentPreference = AppConstants.getPreferredGitApp(),
            !currentPreference.isEmpty,
            let gitApp = GitApp(rawValue: currentPreference),
            gitApp.isInstalled

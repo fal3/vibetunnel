@@ -15,23 +15,27 @@
  */
 import { html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { Session } from './session-list.js';
+import type { Session } from '../../shared/types.js';
 import './terminal.js';
+import './vibe-terminal-binary.js';
 import './file-browser.js';
 import './file-picker.js';
 import type { FilePicker } from './file-picker.js';
 import './clickable-path.js';
 import './terminal-quick-keys.js';
 import './session-view/mobile-input-overlay.js';
+import { titleManager } from '../utils/title-manager.js';
 import './session-view/ctrl-alpha-overlay.js';
 import './session-view/width-selector.js';
 import './session-view/session-header.js';
 import { authClient } from '../services/auth-client.js';
+import { sessionActionService } from '../services/session-action-service.js';
 import { createLogger } from '../utils/logger.js';
 import {
   COMMON_TERMINAL_WIDTHS,
   TerminalPreferencesManager,
 } from '../utils/terminal-preferences.js';
+import type { TerminalThemeId } from '../utils/terminal-themes.js';
 import { ConnectionManager } from './session-view/connection-manager.js';
 import {
   type DirectKeyboardCallbacks,
@@ -48,6 +52,8 @@ import {
   type TerminalStateCallbacks,
 } from './session-view/terminal-lifecycle-manager.js';
 import type { Terminal } from './terminal.js';
+import { type AppPreferences, STORAGE_KEY } from './unified-settings.js';
+import type { VibeTerminalBinary } from './vibe-terminal-binary.js';
 
 // Extend Window interface to include our custom property
 declare global {
@@ -70,6 +76,7 @@ export class SessionView extends LitElement {
   @property({ type: Boolean }) showSidebarToggle = false;
   @property({ type: Boolean }) sidebarCollapsed = false;
   @property({ type: Boolean }) disableFocusManagement = false;
+  @property({ type: Boolean }) keyboardCaptureActive = true;
   @state() private connected = false;
   @state() private showMobileInput = false;
   @state() private mobileInputText = '';
@@ -87,8 +94,11 @@ export class SessionView extends LitElement {
   @state() private showImagePicker = false;
   @state() private isDragOver = false;
   @state() private terminalFontSize = 14;
+  @state() private terminalTheme: TerminalThemeId = 'auto';
   @state() private terminalContainerHeight = '100%';
   @state() private isLandscape = false;
+  @state() private useBinaryMode = false;
+  @state() private macAppConnected = false;
 
   private preferencesManager = TerminalPreferencesManager.getInstance();
 
@@ -187,6 +197,7 @@ export class SessionView extends LitElement {
       setConnected: (connected: boolean) => {
         this.connected = connected;
       },
+      getKeyboardCaptureActive: () => this.keyboardCaptureActive,
     };
   }
 
@@ -194,8 +205,14 @@ export class SessionView extends LitElement {
     super.connectedCallback();
     this.connected = true;
 
+    // Check server status to see if Mac app is connected
+    this.checkServerStatus();
+
     // Check initial orientation
     this.checkOrientation();
+
+    // Load binary mode preference
+    this.loadBinaryModePreference();
 
     // Create bound orientation handler
     this.boundHandleOrientationChange = () => this.handleOrientationChange();
@@ -203,6 +220,9 @@ export class SessionView extends LitElement {
     // Listen for orientation changes
     window.addEventListener('orientationchange', this.boundHandleOrientationChange);
     window.addEventListener('resize', this.boundHandleOrientationChange);
+
+    // Listen for binary mode changes
+    window.addEventListener('terminal-binary-mode-changed', this.handleBinaryModeChange);
 
     // Initialize connection manager
     this.connectionManager = new ConnectionManager(
@@ -254,6 +274,7 @@ export class SessionView extends LitElement {
     this.inputManager = new InputManager();
     this.inputManager.setCallbacks({
       requestUpdate: () => this.requestUpdate(),
+      getKeyboardCaptureActive: () => this.keyboardCaptureActive,
     });
 
     // Initialize mobile input manager
@@ -369,14 +390,19 @@ export class SessionView extends LitElement {
     // Load terminal preferences
     this.terminalMaxCols = this.preferencesManager.getMaxCols();
     this.terminalFontSize = this.preferencesManager.getFontSize();
+    this.terminalTheme = this.preferencesManager.getTheme();
+    logger.debug('Loaded terminal theme:', this.terminalTheme);
     this.terminalLifecycleManager.setTerminalFontSize(this.terminalFontSize);
     this.terminalLifecycleManager.setTerminalMaxCols(this.terminalMaxCols);
+    this.terminalLifecycleManager.setTerminalTheme(this.terminalTheme);
 
     // Initialize lifecycle event manager
     this.lifecycleEventManager = new LifecycleEventManager();
     this.lifecycleEventManager.setSessionViewElement(this);
     this.lifecycleEventManager.setCallbacks(this.createLifecycleEventManagerCallbacks());
     this.lifecycleEventManager.setSession(this.session);
+
+    // Session action callbacks will be provided per-call to the service
 
     // Load direct keyboard preference (needed before lifecycle setup)
     try {
@@ -410,6 +436,9 @@ export class SessionView extends LitElement {
       window.removeEventListener('orientationchange', this.boundHandleOrientationChange);
       window.removeEventListener('resize', this.boundHandleOrientationChange);
     }
+
+    // Remove binary mode listener
+    window.removeEventListener('terminal-binary-mode-changed', this.handleBinaryModeChange);
 
     // Remove drag & drop and paste event listeners
     this.removeEventListener('dragover', this.boundHandleDragOver);
@@ -451,26 +480,78 @@ export class SessionView extends LitElement {
     this.requestUpdate();
   }
 
+  private loadBinaryModePreference() {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const preferences = JSON.parse(stored) as AppPreferences;
+        this.useBinaryMode = preferences.useBinaryMode ?? false;
+      }
+    } catch (error) {
+      logger.warn('Failed to load binary mode preference', error);
+    }
+  }
+
+  private handleBinaryModeChange = (event: Event) => {
+    const customEvent = event as CustomEvent<boolean>;
+    const newValue = customEvent.detail;
+
+    // Only update if value actually changed
+    if (this.useBinaryMode !== newValue) {
+      this.useBinaryMode = newValue;
+
+      // If we have an active session, reconnect with new mode
+      if (this.session && this.connected) {
+        // Disconnect current terminal
+        this.connectionManager.cleanupStreamConnection();
+
+        // Force a re-render to switch terminal components
+        this.requestUpdate();
+
+        // Re-establish connection after component switch
+        requestAnimationFrame(() => {
+          this.ensureTerminalInitialized();
+        });
+      }
+    }
+  };
+
+  private getTerminalElement(): Terminal | VibeTerminalBinary | null {
+    return this.useBinaryMode
+      ? (this.querySelector('vibe-terminal-binary') as VibeTerminalBinary | null)
+      : (this.querySelector('vibe-terminal') as Terminal | null);
+  }
+
   firstUpdated(changedProperties: PropertyValues) {
     super.firstUpdated(changedProperties);
-    if (this.session && this.connected) {
-      // Terminal setup is handled by state machine when reaching active state
-      this.terminalLifecycleManager.setupTerminal();
-    }
+
+    // Load terminal preferences BEFORE terminal setup to ensure proper initialization
+    this.terminalTheme = this.preferencesManager.getTheme();
+    logger.debug('Loaded terminal theme from preferences:', this.terminalTheme);
+
+    // Don't setup terminal here - wait for session data to be available
+    // Terminal setup will be triggered in updated() when session becomes available
   }
 
   updated(changedProperties: Map<string, unknown>) {
     super.updated(changedProperties);
 
-    // If session changed, clean up old stream connection
+    // If session changed, clean up old stream connection and reset terminal state
     if (changedProperties.has('session')) {
       const oldSession = changedProperties.get('session') as Session | null;
-      if (oldSession && oldSession.id !== this.session?.id) {
+      const sessionChanged = oldSession?.id !== this.session?.id;
+
+      if (sessionChanged && oldSession) {
         logger.log('Session changed, cleaning up old stream connection');
         if (this.connectionManager) {
           this.connectionManager.cleanupStreamConnection();
         }
+        // Clean up terminal lifecycle manager for fresh start
+        if (this.terminalLifecycleManager) {
+          this.terminalLifecycleManager.cleanup();
+        }
       }
+
       // Update managers with new session
       if (this.inputManager) {
         this.inputManager.setSession(this.session);
@@ -481,59 +562,71 @@ export class SessionView extends LitElement {
       if (this.lifecycleEventManager) {
         this.lifecycleEventManager.setSession(this.session);
       }
+
+      // Initialize terminal when session first becomes available
+      if (this.session && this.connected && !oldSession) {
+        logger.log('Session data now available, initializing terminal');
+        this.ensureTerminalInitialized();
+      }
     }
 
-    // Stop loading and create terminal when session becomes available
+    // Stop loading and ensure terminal is initialized when session becomes available
     if (
       changedProperties.has('session') &&
       this.session &&
       this.loadingAnimationManager.isLoading()
     ) {
       this.loadingAnimationManager.stopLoading();
-      this.terminalLifecycleManager.setupTerminal();
+      this.ensureTerminalInitialized();
     }
 
-    // Initialize terminal after first render when terminal element exists
-    if (!this.terminalLifecycleManager.getTerminal() && this.session && this.connected) {
-      const terminalElement = this.querySelector('vibe-terminal') as Terminal;
-      if (terminalElement) {
-        this.terminalLifecycleManager.initializeTerminal();
-      }
+    // Ensure terminal is initialized when connected state changes
+    if (changedProperties.has('connected') && this.connected && this.session) {
+      this.ensureTerminalInitialized();
     }
 
-    // Create hidden input if direct keyboard is enabled on mobile
-    if (
-      this.isMobile &&
-      this.useDirectKeyboard &&
-      !this.directKeyboardManager.getShowQuickKeys() &&
-      this.session &&
-      this.connected
-    ) {
-      // Clear any existing timeout
-      if (this.createHiddenInputTimeout) {
-        clearTimeout(this.createHiddenInputTimeout);
-      }
-
-      // Delay creation to ensure terminal is rendered and DOM is stable
-      const TERMINAL_RENDER_DELAY_MS = 100;
-      this.createHiddenInputTimeout = setTimeout(() => {
-        try {
-          // Re-validate conditions in case component state changed during the delay
-          if (
-            this.isMobile &&
-            this.useDirectKeyboard &&
-            !this.directKeyboardManager.getShowQuickKeys() &&
-            this.connected // Ensure component is still connected to DOM
-          ) {
-            this.directKeyboardManager.ensureHiddenInputVisible();
-          }
-        } catch (error) {
-          logger.warn('Failed to create hidden input during setTimeout:', error);
-        }
-        // Clear the timeout reference after execution
-        this.createHiddenInputTimeout = null;
-      }, TERMINAL_RENDER_DELAY_MS);
+    // Update input manager callbacks when keyboard capture state changes
+    if (changedProperties.has('keyboardCaptureActive') && this.inputManager) {
+      // The callback already returns this.keyboardCaptureActive which gets the updated value
+      // We don't need to update callbacks, but we can add logging for debugging
+      logger.log('Keyboard capture state updated:', this.keyboardCaptureActive);
     }
+  }
+
+  /**
+   * Ensures terminal is properly initialized with current session data.
+   * This method is idempotent and can be called multiple times safely.
+   */
+  private ensureTerminalInitialized() {
+    if (!this.session || !this.connected) {
+      logger.log('Cannot initialize terminal: missing session or not connected');
+      return;
+    }
+
+    // Check if terminal is already initialized
+    if (this.terminalLifecycleManager.getTerminal()) {
+      logger.log('Terminal already initialized');
+      return;
+    }
+
+    // Check if terminal element exists in DOM
+    const terminalElement = this.getTerminalElement();
+    if (!terminalElement) {
+      logger.log('Terminal element not found in DOM, deferring initialization');
+      // Retry after next render cycle
+      requestAnimationFrame(() => {
+        this.ensureTerminalInitialized();
+      });
+      return;
+    }
+
+    logger.log('Initializing terminal with session:', this.session.id);
+
+    // Setup terminal with session data
+    this.terminalLifecycleManager.setupTerminal();
+
+    // Initialize terminal after setup
+    this.terminalLifecycleManager.initializeTerminal();
   }
 
   async handleKeyboardInput(e: KeyboardEvent) {
@@ -579,14 +672,21 @@ export class SessionView extends LitElement {
     );
   }
 
-  private handleScreenshare() {
-    // Dispatch event to start screenshare
-    this.dispatchEvent(
-      new CustomEvent('start-screenshare', {
-        bubbles: true,
-        composed: true,
-      })
-    );
+  private async checkServerStatus() {
+    try {
+      const response = await fetch('/api/server/status', {
+        headers: authClient.getAuthHeader(),
+      });
+      if (response.ok) {
+        const status = await response.json();
+        this.macAppConnected = status.macAppConnected || false;
+        logger.debug('server status:', status);
+      }
+    } catch (error) {
+      logger.warn('failed to check server status:', error);
+      // Default to not connected if we can't check
+      this.macAppConnected = false;
+    }
   }
 
   private handleOpenSettings() {
@@ -783,7 +883,7 @@ export class SessionView extends LitElement {
   private handleTerminalFitToggle() {
     this.terminalFitHorizontally = !this.terminalFitHorizontally;
     // Find the terminal component and call its handleFitToggle method
-    const terminal = this.querySelector('vibe-terminal') as HTMLElement & {
+    const terminal = this.getTerminalElement() as HTMLElement & {
       handleFitToggle?: () => void;
     };
     if (terminal?.handleFitToggle) {
@@ -805,7 +905,7 @@ export class SessionView extends LitElement {
     this.terminalLifecycleManager.setTerminalMaxCols(newMaxCols);
 
     // Update the terminal component
-    const terminal = this.querySelector('vibe-terminal') as Terminal;
+    const terminal = this.getTerminalElement();
     if (terminal) {
       terminal.maxCols = newMaxCols;
       // Mark that user has manually selected a width
@@ -818,7 +918,7 @@ export class SessionView extends LitElement {
   }
 
   getCurrentWidthLabel(): string {
-    const terminal = this.querySelector('vibe-terminal') as Terminal;
+    const terminal = this.getTerminalElement();
     const userOverrideWidth = terminal?.userOverrideWidth || false;
     const initialCols = terminal?.initialCols || 0;
 
@@ -837,7 +937,7 @@ export class SessionView extends LitElement {
   }
 
   getWidthTooltip(): string {
-    const terminal = this.querySelector('vibe-terminal') as Terminal;
+    const terminal = this.getTerminalElement();
     const userOverrideWidth = terminal?.userOverrideWidth || false;
     const initialCols = terminal?.initialCols || 0;
 
@@ -862,9 +962,23 @@ export class SessionView extends LitElement {
     this.terminalLifecycleManager.setTerminalFontSize(clampedSize);
 
     // Update the terminal component
-    const terminal = this.querySelector('vibe-terminal') as Terminal;
+    const terminal = this.getTerminalElement();
     if (terminal) {
       terminal.fontSize = clampedSize;
+      terminal.requestUpdate();
+    }
+  }
+
+  private handleThemeChange(newTheme: TerminalThemeId) {
+    logger.debug('Changing terminal theme to:', newTheme);
+
+    this.terminalTheme = newTheme;
+    this.preferencesManager.setTheme(newTheme);
+    this.terminalLifecycleManager.setTerminalTheme(newTheme);
+
+    const terminal = this.getTerminalElement();
+    if (terminal) {
+      terminal.theme = newTheme;
       terminal.requestUpdate();
     }
   }
@@ -892,6 +1006,67 @@ export class SessionView extends LitElement {
 
   private handleCloseFilePicker() {
     this.showImagePicker = false;
+  }
+
+  private async handlePasteImage() {
+    // Try to paste image from clipboard
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+
+      for (const clipboardItem of clipboardItems) {
+        const imageTypes = clipboardItem.types.filter((type) => type.startsWith('image/'));
+
+        for (const imageType of imageTypes) {
+          const blob = await clipboardItem.getType(imageType);
+          const file = new File([blob], `pasted-image.${imageType.split('/')[1]}`, {
+            type: imageType,
+          });
+
+          await this.uploadFile(file);
+          logger.log(`Successfully pasted image from clipboard`);
+          return;
+        }
+      }
+
+      // No image found in clipboard
+      logger.log('No image found in clipboard');
+      this.dispatchEvent(
+        new CustomEvent('error', {
+          detail: 'No image found in clipboard',
+          bubbles: true,
+          composed: true,
+        })
+      );
+    } catch (error) {
+      logger.error('Failed to paste image from clipboard:', error);
+      this.dispatchEvent(
+        new CustomEvent('error', {
+          detail: 'Failed to access clipboard. Please check permissions.',
+          bubbles: true,
+          composed: true,
+        })
+      );
+    }
+  }
+
+  private handleSelectImage() {
+    // Use the file picker component to open image picker
+    const filePicker = this.querySelector('file-picker') as FilePicker | null;
+    if (filePicker && typeof filePicker.openImagePicker === 'function') {
+      filePicker.openImagePicker();
+    } else {
+      logger.error('File picker component not found or openImagePicker method not available');
+    }
+  }
+
+  private handleOpenCamera() {
+    // Use the file picker component to open camera
+    const filePicker = this.querySelector('file-picker') as FilePicker | null;
+    if (filePicker && typeof filePicker.openCamera === 'function') {
+      filePicker.openCamera();
+    } else {
+      logger.error('File picker component not found or openCamera method not available');
+    }
   }
 
   private async handleFileSelected(event: CustomEvent) {
@@ -946,6 +1121,10 @@ export class SessionView extends LitElement {
 
       // Update the local session object with the server-assigned name
       this.session = { ...this.session, name: actualName };
+
+      // Update the page title with the new session name
+      const sessionName = actualName || this.session.command.join(' ');
+      titleManager.setSessionTitle(sessionName);
 
       // Dispatch event to notify parent components with the actual name
       this.dispatchEvent(
@@ -1105,6 +1284,17 @@ export class SessionView extends LitElement {
     }
   }
 
+  private handleTerminalResize(event: CustomEvent<{ cols: number; rows: number }>) {
+    logger.log('Terminal resized:', event.detail);
+    this.terminalLifecycleManager.handleTerminalResize(event);
+  }
+
+  private handleTerminalReady() {
+    logger.log('Terminal ready event received');
+    // Terminal is ready, ensure it's properly initialized
+    this.ensureTerminalInitialized();
+  }
+
   private _updateTerminalTransformTimeout: ReturnType<typeof setTimeout> | null = null;
 
   private updateTerminalTransform(): void {
@@ -1148,7 +1338,7 @@ export class SessionView extends LitElement {
       // Always notify terminal to resize when there's a change
       // Use requestAnimationFrame to ensure DOM has updated
       requestAnimationFrame(() => {
-        const terminal = this.querySelector('vibe-terminal') as Terminal;
+        const terminal = this.getTerminalElement();
         if (terminal) {
           // Notify terminal of size change
           const terminalElement = terminal as unknown as { fitTerminal?: () => void };
@@ -1160,7 +1350,9 @@ export class SessionView extends LitElement {
           if (heightReduction > 0) {
             // Small delay then scroll to bottom to keep cursor visible
             setTimeout(() => {
-              terminal.scrollToBottom();
+              if ('scrollToBottom' in terminal) {
+                terminal.scrollToBottom();
+              }
             }, 50);
           }
         }
@@ -1194,10 +1386,10 @@ export class SessionView extends LitElement {
   render() {
     if (!this.session) {
       return html`
-        <div class="fixed inset-0 bg-dark-bg flex items-center justify-center">
-          <div class="text-dark-text font-mono text-center">
+        <div class="fixed inset-0 bg-base flex items-center justify-center">
+          <div class="text-primary font-mono text-center">
             <div class="text-2xl mb-2">${this.loadingAnimationManager.getLoadingText()}</div>
-            <div class="text-sm text-dark-text-muted">Waiting for session...</div>
+            <div class="text-sm text-muted">Waiting for session...</div>
           </div>
         </div>
       `;
@@ -1212,12 +1404,12 @@ export class SessionView extends LitElement {
           box-shadow: none !important;
         }
         session-view:focus {
-          outline: 2px solid rgb(16 185 129) !important;
+          outline: 2px solid rgb(var(--color-primary)) !important;
           outline-offset: -2px;
         }
       </style>
       <div
-        class="flex flex-col bg-dark-bg font-mono relative"
+        class="flex flex-col bg-base font-mono relative"
         style="height: 100vh; height: 100dvh; outline: none !important; box-shadow: none !important;"
       >
         <!-- Session Header -->
@@ -1230,6 +1422,8 @@ export class SessionView extends LitElement {
           .terminalFontSize=${this.terminalFontSize}
           .customWidth=${this.customWidth}
           .showWidthSelector=${this.showWidthSelector}
+          .keyboardCaptureActive=${this.keyboardCaptureActive}
+          .isMobile=${this.isMobile}
           .widthLabel=${this.getCurrentWidthLabel()}
           .widthTooltip=${this.getWidthTooltip()}
           .onBack=${() => this.handleBack()}
@@ -1240,19 +1434,34 @@ export class SessionView extends LitElement {
           .onMaxWidthToggle=${() => this.handleMaxWidthToggle()}
           .onWidthSelect=${(width: number) => this.handleWidthSelect(width)}
           .onFontSizeChange=${(size: number) => this.handleFontSizeChange(size)}
-          .onScreenshare=${() => this.handleScreenshare()}
           .onOpenSettings=${() => this.handleOpenSettings()}
+          .macAppConnected=${this.macAppConnected}
+          .onTerminateSession=${() => this.handleTerminateSession()}
+          .onClearSession=${() => this.handleClearSession()}
           @close-width-selector=${() => {
             this.showWidthSelector = false;
             this.customWidth = '';
           }}
           @session-rename=${(e: CustomEvent) => this.handleRename(e)}
+          @paste-image=${() => this.handlePasteImage()}
+          @select-image=${() => this.handleSelectImage()}
+          @open-camera=${() => this.handleOpenCamera()}
+          @show-image-upload-options=${() => this.handleSelectImage()}
+          @capture-toggled=${(e: CustomEvent) => {
+            this.dispatchEvent(
+              new CustomEvent('capture-toggled', {
+                detail: e.detail,
+                bubbles: true,
+                composed: true,
+              })
+            );
+          }}
         >
         </session-header>
 
         <!-- Enhanced Terminal Container -->
         <div
-          class="${this.terminalContainerHeight === '100%' ? 'flex-1' : ''} bg-dark-bg overflow-hidden min-h-0 relative ${
+          class="${this.terminalContainerHeight === '100%' ? 'flex-1' : ''} bg-bg overflow-hidden min-h-0 relative ${
             this.session?.status === 'exited' ? 'session-exited opacity-90' : ''
           } ${
             // Add safe area padding for landscape mode on mobile to handle notch
@@ -1266,33 +1475,60 @@ export class SessionView extends LitElement {
               ? html`
                 <!-- Enhanced Loading overlay -->
                 <div
-                  class="absolute inset-0 bg-dark-bg bg-opacity-90 backdrop-filter backdrop-blur-sm flex items-center justify-center z-10 animate-fade-in"
+                  class="absolute inset-0 bg-bg bg-opacity-90 backdrop-filter backdrop-blur-sm flex items-center justify-center z-10 animate-fade-in"
                 >
-                  <div class="text-dark-text font-mono text-center">
-                    <div class="text-2xl mb-3 text-accent-primary animate-pulse-primary">${this.loadingAnimationManager.getLoadingText()}</div>
-                    <div class="text-sm text-dark-text-muted">Connecting to session...</div>
+                  <div class="text-primary font-mono text-center">
+                    <div class="text-2xl mb-3 text-primary animate-pulse-primary">${this.loadingAnimationManager.getLoadingText()}</div>
+                    <div class="text-sm text-muted">Connecting to session...</div>
                   </div>
                 </div>
               `
               : ''
           }
           <!-- Enhanced Terminal Component -->
-          <vibe-terminal
-            .sessionId=${this.session?.id || ''}
-            .sessionStatus=${this.session?.status || 'running'}
-            .cols=${80}
-            .rows=${24}
-            .fontSize=${this.terminalFontSize}
-            .fitHorizontally=${false}
-            .maxCols=${this.terminalMaxCols}
-            .initialCols=${this.session?.initialCols || 0}
-            .initialRows=${this.session?.initialRows || 0}
-            .disableClick=${this.isMobile && this.useDirectKeyboard}
-            .hideScrollButton=${this.showQuickKeys}
-            class="w-full h-full p-0 m-0 terminal-container"
-            @click=${this.handleTerminalClick}
-            @terminal-input=${this.handleTerminalInput}
-          ></vibe-terminal>
+          ${
+            this.useBinaryMode
+              ? html`
+              <vibe-terminal-binary
+                .sessionId=${this.session?.id || ''}
+                .sessionStatus=${this.session?.status || 'running'}
+                .cols=${80}
+                .rows=${24}
+                .fontSize=${this.terminalFontSize}
+                .fitHorizontally=${false}
+                .maxCols=${this.terminalMaxCols}
+                .theme=${this.terminalTheme}
+                .initialCols=${this.session?.initialCols || 0}
+                .initialRows=${this.session?.initialRows || 0}
+                .disableClick=${this.isMobile && this.useDirectKeyboard}
+                .hideScrollButton=${this.showQuickKeys}
+                class="w-full h-full p-0 m-0 terminal-container"
+                @click=${this.handleTerminalClick}
+                @terminal-input=${this.handleTerminalInput}
+                @terminal-resize=${this.handleTerminalResize}
+                @terminal-ready=${this.handleTerminalReady}
+              ></vibe-terminal-binary>
+            `
+              : html`
+              <vibe-terminal
+                .sessionId=${this.session?.id || ''}
+                .sessionStatus=${this.session?.status || 'running'}
+                .cols=${80}
+                .rows=${24}
+                .fontSize=${this.terminalFontSize}
+                .fitHorizontally=${false}
+                .maxCols=${this.terminalMaxCols}
+                .theme=${this.terminalTheme}
+                .initialCols=${this.session?.initialCols || 0}
+                .initialRows=${this.session?.initialRows || 0}
+                .disableClick=${this.isMobile && this.useDirectKeyboard}
+                .hideScrollButton=${this.showQuickKeys}
+                class="w-full h-full p-0 m-0 terminal-container"
+                @click=${this.handleTerminalClick}
+                @terminal-input=${this.handleTerminalInput}
+              ></vibe-terminal>
+            `
+          }
         </div>
 
         <!-- Floating Session Exited Banner (outside terminal container to avoid filter effects) -->
@@ -1303,7 +1539,7 @@ export class SessionView extends LitElement {
                 class="fixed inset-0 flex items-center justify-center pointer-events-none z-[25]"
               >
                 <div
-                  class="bg-dark-bg-elevated border border-status-warning text-status-warning font-medium text-sm tracking-wide px-6 py-3 rounded-lg shadow-elevated animate-scale-in"
+                  class="bg-elevated border border-status-warning text-status-warning font-medium text-sm tracking-wide px-6 py-3 rounded-lg shadow-elevated animate-scale-in"
                 >
                   <span class="flex items-center gap-2">
                     <span class="w-2 h-2 rounded-full bg-status-warning"></span>
@@ -1319,7 +1555,7 @@ export class SessionView extends LitElement {
         ${
           this.isMobile && !this.showMobileInput && !this.useDirectKeyboard
             ? html`
-              <div class="flex-shrink-0 p-4" style="background: black;">
+              <div class="flex-shrink-0 p-4 bg-secondary">
                 <!-- First row: Arrow keys -->
                 <div class="flex gap-2 mb-2">
                   <button
@@ -1472,41 +1708,44 @@ export class SessionView extends LitElement {
           @file-error=${this.handleFileError}
           @file-cancel=${this.handleCloseFilePicker}
         ></file-picker>
+
         
         <!-- Width Selector Modal (moved here for proper positioning) -->
-        <width-selector
+        <terminal-settings-modal
           .visible=${this.showWidthSelector}
           .terminalMaxCols=${this.terminalMaxCols}
           .terminalFontSize=${this.terminalFontSize}
+          .terminalTheme=${this.terminalTheme}
           .customWidth=${this.customWidth}
           .isMobile=${this.isMobile}
           .onWidthSelect=${(width: number) => this.handleWidthSelect(width)}
           .onFontSizeChange=${(size: number) => this.handleFontSizeChange(size)}
+          .onThemeChange=${(theme: TerminalThemeId) => this.handleThemeChange(theme)}
           .onClose=${() => {
             this.showWidthSelector = false;
             this.customWidth = '';
           }}
-        ></width-selector>
+        ></terminal-settings-modal>
 
         <!-- Drag & Drop Overlay -->
         ${
           this.isDragOver
             ? html`
-              <div class="fixed inset-0 bg-black bg-opacity-90 backdrop-blur-sm flex items-center justify-center z-50 pointer-events-none animate-fade-in">
-                <div class="bg-dark-bg-elevated border-2 border-dashed border-accent-primary rounded-xl p-10 text-center max-w-md mx-4 shadow-2xl animate-scale-in">
+              <div class="fixed inset-0 bg-bg bg-opacity-90 backdrop-blur-sm flex items-center justify-center z-50 pointer-events-none animate-fade-in">
+                <div class="bg-elevated border-2 border-dashed border-primary rounded-xl p-10 text-center max-w-md mx-4 shadow-2xl animate-scale-in">
                   <div class="relative mb-6">
-                    <div class="w-24 h-24 mx-auto bg-gradient-to-br from-accent-primary to-accent-primary-light rounded-full flex items-center justify-center shadow-glow-primary">
-                      <svg class="w-12 h-12 text-dark-bg" fill="currentColor" viewBox="0 0 20 20">
+                    <div class="w-24 h-24 mx-auto bg-gradient-to-br from-primary to-primary-light rounded-full flex items-center justify-center shadow-glow">
+                      <svg class="w-12 h-12 text-base" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
                       </svg>
                     </div>
-                    <div class="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-32 h-1 bg-gradient-to-r from-transparent via-accent-primary to-transparent opacity-50"></div>
+                    <div class="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-32 h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-50"></div>
                   </div>
-                  <h3 class="text-2xl font-bold text-dark-text mb-3">Drop files here</h3>
-                  <p class="text-sm text-dark-text-muted mb-4">Files will be uploaded and the path sent to terminal</p>
-                  <div class="inline-flex items-center gap-2 text-xs text-dark-text-dim bg-dark-bg-secondary px-4 py-2 rounded-lg">
+                  <h3 class="text-2xl font-bold text-primary mb-3">Drop files here</h3>
+                  <p class="text-sm text-muted mb-4">Files will be uploaded and the path sent to terminal</p>
+                  <div class="inline-flex items-center gap-2 text-xs text-dim bg-secondary px-4 py-2 rounded-lg">
                     <span class="opacity-75">Or press</span>
-                    <kbd class="px-2 py-1 bg-dark-bg-tertiary border border-dark-border rounded text-accent-primary font-mono text-xs">⌘V</kbd>
+                    <kbd class="px-2 py-1 bg-tertiary border border-base rounded text-primary font-mono text-xs">⌘V</kbd>
                     <span class="opacity-75">to paste from clipboard</span>
                   </div>
                 </div>
@@ -1516,5 +1755,48 @@ export class SessionView extends LitElement {
         }
       </div>
     `;
+  }
+
+  private async handleTerminateSession() {
+    if (!this.session) return;
+    await sessionActionService.terminateSession(this.session, {
+      authClient: authClient,
+      callbacks: {
+        onError: (message: string) => {
+          this.dispatchEvent(
+            new CustomEvent('error', {
+              detail: message,
+              bubbles: true,
+              composed: true,
+            })
+          );
+        },
+        onSuccess: () => {
+          // For terminate, session status will be updated via SSE
+        },
+      },
+    });
+  }
+
+  private async handleClearSession() {
+    if (!this.session) return;
+    await sessionActionService.clearSession(this.session, {
+      authClient: authClient,
+      callbacks: {
+        onError: (message: string) => {
+          this.dispatchEvent(
+            new CustomEvent('error', {
+              detail: message,
+              bubbles: true,
+              composed: true,
+            })
+          );
+        },
+        onSuccess: () => {
+          // Session cleared successfully - navigate back to list
+          this.handleBack();
+        },
+      },
+    });
   }
 }

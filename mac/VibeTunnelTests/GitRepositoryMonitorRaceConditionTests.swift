@@ -3,15 +3,30 @@ import Testing
 @testable import VibeTunnel
 
 /// Tests to verify that the race condition in GitHub URL fetching is fixed
+@Suite("Git Repository Monitor Race Condition Tests", .tags(.concurrency, .gitRepository))
 @MainActor
 struct GitRepositoryMonitorRaceConditionTests {
-    @Test("Concurrent GitHub URL fetches don't cause duplicate Git operations")
+    @Test(
+        "Concurrent GitHub URL fetches don't cause duplicate Git operations",
+        .tags(.attachmentTests),
+        .enabled(if: TestConditions.isInGitRepository())
+    )
     func concurrentGitHubURLFetches() async throws {
+        // Attach test environment information
+        Attachment.record("""
+        Git Repository: \(FileManager.default.fileExists(atPath: ".git") ? "Valid" : "Invalid")
+        Test Repository Path: /test/repo/path
+        Concurrent Operations: 10
+        Test Type: Race Condition Prevention
+        """, named: "Git Test Environment")
+
+        // Attach initial monitor state
+        Attachment.record("Monitor created: \(type(of: GitRepositoryMonitor()))", named: "Initial Monitor State")
         let monitor = GitRepositoryMonitor()
         let testRepoPath = "/test/repo/path"
 
         // Create a mock repository
-        let mockRepo = GitRepository(
+        _ = GitRepository(
             path: testRepoPath,
             modifiedCount: 0,
             addedCount: 0,
@@ -43,8 +58,9 @@ struct GitRepositoryMonitorRaceConditionTests {
             }
         }
 
-        // Wait a bit to allow tasks to start
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+        // Wait a bit to allow tasks to start (increased for CI)
+        let waitTime: UInt64 = TestConditions.isRunningInCI() ? 500_000_000 : 100_000_000 // 0.5s in CI, 0.1s locally
+        try await Task.sleep(nanoseconds: waitTime)
 
         // Verify that in-progress tracking is working
         // Note: This is a simplified test since we can't easily access private properties

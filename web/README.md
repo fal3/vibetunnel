@@ -1,81 +1,294 @@
-# VibeTunnel Web
+# VibeTunnel CLI
 
-Web terminal interface and server for VibeTunnel.
+**Turn any browser into your terminal.** VibeTunnel proxies your terminals right into the browser, so you can vibe-code anywhere.
 
-## Quick Start
+Full-featured terminal sharing server with web interface for macOS and Linux. Windows not yet supported.
 
-Production users: Use the pre-built VibeTunnel executable from the main app.
+## Why VibeTunnel?
 
-## Development
+Ever wanted to check on your AI agents while you're away? Need to monitor that long-running build from your phone? Want to share a terminal session with a colleague without complex SSH setups? VibeTunnel makes it happen with zero friction.
 
+## Installation
+
+### From npm (Recommended)
 ```bash
+npm install -g vibetunnel
+```
+
+### From Source
+```bash
+git clone https://github.com/amantus-ai/vibetunnel.git
+cd vibetunnel/web
 pnpm install
-pnpm run dev        # Watch mode: server + client
-pnpm run dev:client # Watch mode: client only (for debugging server)
+pnpm run build
 ```
 
-Open http://localhost:3000
+## Installation Differences
 
-### Pre-commit Hooks
+**npm package**:
+- Pre-built binaries for common platforms (macOS x64/arm64, Linux x64/arm64)
+- Automatic fallback to source compilation if pre-built binaries unavailable
+- Global installation makes `vibetunnel` command available system-wide
+- Conditional `vt` command installation (see [VT Installation Guide](docs/VT_INSTALLATION.md))
+- Includes production dependencies only
 
-This project uses husky and lint-staged to enforce code quality standards. After running `pnpm install`, pre-commit hooks will automatically:
+**Source installation**:
+- Full development environment with hot reload (`pnpm run dev`)
+- Access to all development scripts and tools
+- Ability to modify and rebuild the application
+- Includes test suites and development dependencies
 
-- Format code with Biome
-- Check for linting errors
-- Run TypeScript type checking for all configs
+## Requirements
 
-If your commit fails due to linting or type errors, fix the issues and try again. Many formatting issues will be auto-fixed.
+- Node.js >= 20.0.0
+- macOS or Linux (Windows not yet supported)
+- Build tools for native modules (Xcode on macOS, build-essential on Linux)
 
-### Build Commands
+## Usage
+
+### Start the server
 
 ```bash
-pnpm run clean      # Remove build artifacts
-pnpm run build      # Build everything (including native executable)
-pnpm run lint       # Check code style
-pnpm run lint:fix   # Fix code style
-pnpm run typecheck  # Type checking
-pnpm run test       # Run all tests (unit + e2e)
-pnpm run format     # Format code
+# Start with default settings (port 4020)
+vibetunnel
+
+# Start with custom port
+vibetunnel --port 8080
+
+# Start without authentication
+vibetunnel --no-auth
+
+# Bind to specific interface
+vibetunnel --bind 127.0.0.1 --port 4020
+
+# Enable SSH key authentication
+vibetunnel --enable-ssh-keys
+
+# SSH keys only (no password auth)
+vibetunnel --disallow-user-password
 ```
 
-## Production Build
+Then open http://localhost:4020 in your browser to access the web interface.
+
+### Command-line Options
+
+```
+vibetunnel [options]
+
+Basic Options:
+  --help, -h            Show help message
+  --version, -v         Show version information
+  --port <number>       Server port (default: 4020 or PORT env var)
+  --bind <address>      Bind address (default: 0.0.0.0, all interfaces)
+
+Authentication Options:
+  --no-auth             Disable authentication (auto-login as current user)
+  --enable-ssh-keys     Enable SSH key authentication UI and functionality
+  --disallow-user-password  Disable password auth, SSH keys only (auto-enables --enable-ssh-keys)
+  --allow-local-bypass  Allow localhost connections to bypass authentication
+  --local-auth-token <token>  Token for localhost authentication bypass
+
+Push Notification Options:
+  --push-enabled        Enable push notifications (default: enabled)
+  --push-disabled       Disable push notifications
+  --vapid-email <email> Contact email for VAPID configuration
+  --generate-vapid-keys Generate new VAPID keys if none exist
+
+Network Discovery Options:
+  --no-mdns             Disable mDNS/Bonjour advertisement (enabled by default)
+
+HQ Mode Options:
+  --hq                  Run as HQ (headquarters) server
+  --no-hq-auth          Disable HQ authentication
+
+Remote Server Options:
+  --hq-url <url>        HQ server URL to register with
+  --hq-username <user>  Username for HQ authentication
+  --hq-password <pass>  Password for HQ authentication
+  --name <name>         Unique name for remote server
+  --allow-insecure-hq   Allow HTTP URLs for HQ (not recommended)
+
+Debugging:
+  --debug               Enable debug logging
+```
+
+### Use the vt command wrapper
+
+The `vt` command allows you to run commands with TTY forwarding:
 
 ```bash
-pnpm run build          # Creates Node.js SEA executable
-./native/vibetunnel    # Run standalone executable (no Node.js required)
+# Monitor AI agents with automatic activity tracking
+vt claude
+vt claude --dangerously-skip-permissions
+
+# Run commands with output visible in VibeTunnel
+vt npm test
+vt python script.py
+vt top
+
+# Launch interactive shell
+vt --shell
+vt -i
+
+# Update session title (inside a session)
+vt title "My Project"
+
+# Execute command directly without shell wrapper
+vt --no-shell-wrap ls -la
+vt -S ls -la
+
+# Control terminal title behavior
+vt --title-mode none     # No title management
+vt --title-mode filter   # Block all title changes
+vt --title-mode static   # Show directory and command
+vt --title-mode dynamic  # Show directory, command, and activity
+
+# Verbosity control
+vt -q npm test          # Quiet mode (errors only)
+vt -v npm run dev       # Verbose mode
+vt -vv npm test         # Extra verbose
+vt -vvv npm build       # Debug mode
 ```
 
-## Architecture
+### Forward commands to a session
 
-See [spec.md](./spec.md) for detailed architecture documentation.
+```bash
+# Basic usage
+vibetunnel fwd <session-id> <command> [args...]
 
-## Key Features
+# Examples
+vibetunnel fwd --session-id abc123 ls -la
+vibetunnel fwd --session-id abc123 npm test
+vibetunnel fwd --session-id abc123 python script.py
+```
 
-- Terminal sessions via node-pty
-- Real-time streaming (SSE + WebSocket)
-- Binary-optimized buffer updates
-- Multi-session support
-- File browser integration
+Linux users can install VibeTunnel as a systemd service with `vibetunnel systemd` for automatic startup and process management - see [detailed systemd documentation](docs/systemd.md).
 
-## Terminal Resizing Behavior
+### Environment Variables
 
-VibeTunnel intelligently handles terminal width based on how the session was created:
+VibeTunnel respects the following environment variables:
 
-### Tunneled Sessions (via `vt` command)
-- Sessions created by running `vt` in a native terminal window
-- Terminal width is automatically limited to the native terminal's width to prevent text overflow
-- Prevents flickering and display issues in the native terminal
-- Shows "≤120" (or actual width) in the width selector when limited
-- Users can manually override this limit using the width selector
+```bash
+PORT=8080                           # Default port if --port not specified
+VIBETUNNEL_USERNAME=myuser          # Username (for env-based auth, not CLI)
+VIBETUNNEL_PASSWORD=mypass          # Password (for env-based auth, not CLI)
+VIBETUNNEL_CONTROL_DIR=/path        # Control directory for session data
+VIBETUNNEL_SESSION_ID=abc123        # Current session ID (set automatically inside sessions)
+VIBETUNNEL_LOG_LEVEL=debug          # Log level: error, warn, info, verbose, debug
+PUSH_CONTACT_EMAIL=admin@example.com # Contact email for VAPID configuration
+```
 
-### Frontend-Created Sessions
-- Sessions created directly from the web interface (using the "New Session" button)
-- No width restrictions by default - uses full browser width
-- Perfect for web-only workflows where no native terminal is involved
-- Shows "∞" in the width selector for unlimited width
+## Features
 
-### Manual Width Control
-- Click the width indicator in the session header to open the width selector
-- Choose from common terminal widths (80, 120, 132, etc.) or unlimited
-- Width preferences are saved per session and persist across reloads
-- Selecting any width manually overrides automatic limitations
+- **Web-based terminal interface** - Access terminals from any browser
+- **Multiple concurrent sessions** - Run multiple terminals simultaneously
+- **Real-time synchronization** - See output in real-time
+- **TTY forwarding** - Full terminal emulation support
+- **Session management** - Create, list, and manage sessions
+- **Cross-platform** - Works on macOS and Linux
+- **No dependencies** - Just Node.js required
+
+## Package Contents
+
+This npm package includes:
+- Full VibeTunnel server with web UI
+- Command-line tools (vibetunnel, vt)
+- Native PTY support for terminal emulation
+- Web interface with xterm.js
+- Session management and forwarding
+- Built-in systemd service management for Linux
+
+## Platform Support
+
+- macOS (Intel and Apple Silicon)
+- Linux (x64 and ARM64)
+- Windows: Not yet supported ([#252](https://github.com/amantus-ai/vibetunnel/issues/252))
+
+## Troubleshooting
+
+### Installation Issues
+
+If you encounter issues during installation:
+
+1. **Missing Build Tools**: Install build essentials
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get install build-essential python3-dev
+   
+   # macOS
+   xcode-select --install
+   ```
+
+2. **Permission Issues**: Use sudo for global installation
+   ```bash
+   sudo npm install -g vibetunnel
+   ```
+
+3. **Node Version**: Ensure Node.js 20+ is installed
+   ```bash
+   node --version
+   ```
+
+### Runtime Issues
+
+- **Server Won't Start**: Check if port is already in use
+- **Authentication Failed**: Verify system authentication setup
+- **Terminal Not Responsive**: Check browser console for WebSocket errors
+
+### SSH Key Authentication Issues
+
+If you encounter errors when generating or importing SSH keys (e.g., "Cannot read properties of undefined"), this is due to browser security restrictions on the Web Crypto API.
+
+#### The Issue
+Modern browsers (Chrome 60+, Firefox 75+) block the Web Crypto API when accessing web applications over HTTP from non-localhost addresses. This affects:
+- Local network IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+- Any non-localhost hostname over HTTP
+
+#### Solutions
+
+1. **Use localhost (Recommended)**
+   ```bash
+   # Access VibeTunnel via localhost
+   http://localhost:4020
+   
+   # If running on a remote server, use SSH tunneling:
+   ssh -L 4020:localhost:4020 user@your-server
+   # Then access http://localhost:4020 in your browser
+   ```
+
+2. **Enable HTTPS**
+   Set up a reverse proxy with HTTPS using nginx or Caddy (recommended for production).
+
+3. **Chrome Flag Workaround** (Development only)
+   - Navigate to `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
+   - Add your server URL (e.g., `http://192.168.1.100:4020`)
+   - Enable the flag and restart Chrome
+   - ⚠️ This reduces security - use only for development
+
+#### Why This Happens
+The Web Crypto API is restricted to secure contexts (HTTPS or localhost) to prevent man-in-the-middle attacks on cryptographic operations. This is a browser security feature, not a VibeTunnel limitation.
+
+### Development Setup
+
+For source installations:
+```bash
+# Install dependencies
+pnpm install
+
+# Run development server with hot reload
+pnpm run dev
+
+# Run code quality checks
+pnpm run check
+
+# Build for production
+pnpm run build
+```
+
+## Documentation
+
+See the main repository for complete documentation: https://github.com/amantus-ai/vibetunnel
+
+## License
+
+MIT

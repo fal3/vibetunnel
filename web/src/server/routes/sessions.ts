@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { cellsToText } from '../../shared/terminal-text-formatter.js';
-import type { Session, SessionActivity, TitleMode } from '../../shared/types.js';
+import type { ServerStatus, Session, SessionActivity, TitleMode } from '../../shared/types.js';
 import { PtyError, type PtyManager } from '../pty/index.js';
 import type { ActivityMonitor } from '../services/activity-monitor.js';
 import type { RemoteRegistry } from '../services/remote-registry.js';
@@ -12,7 +12,7 @@ import type { StreamWatcher } from '../services/stream-watcher.js';
 import type { TerminalManager } from '../services/terminal-manager.js';
 import { createLogger } from '../utils/logger.js';
 import { generateSessionName } from '../utils/session-naming.js';
-import { createControlMessage } from '../websocket/control-protocol.js';
+import { createControlMessage, type TerminalSpawnResponse } from '../websocket/control-protocol.js';
 import { controlUnixHandler } from '../websocket/control-unix-handler.js';
 
 const logger = createLogger('sessions');
@@ -47,6 +47,22 @@ export function createSessionRoutes(config: SessionRoutesConfig): Router {
   const router = Router();
   const { ptyManager, terminalManager, streamWatcher, remoteRegistry, isHQMode, activityMonitor } =
     config;
+
+  // Server status endpoint
+  router.get('/server/status', async (_req, res) => {
+    logger.debug('[GET /server/status] Getting server status');
+    try {
+      const status: ServerStatus = {
+        macAppConnected: controlUnixHandler.isMacAppConnected(),
+        isHQMode,
+        version: process.env.VERSION || 'unknown',
+      };
+      res.json(status);
+    } catch (error) {
+      logger.error('Failed to get server status:', error);
+      res.status(500).json({ error: 'Failed to get server status' });
+    }
+  });
 
   // List all sessions (aggregate local + remote in HQ mode)
   router.get('/sessions', async (_req, res) => {
@@ -463,10 +479,16 @@ export function createSessionRoutes(config: SessionRoutesConfig): Router {
         return res.status(404).json({ error: 'Session not found' });
       }
 
-      await ptyManager.killSession(sessionId, 'SIGTERM');
-      logger.log(chalk.yellow(`local session ${sessionId} killed`));
-
-      res.json({ success: true, message: 'Session killed' });
+      // If session is already exited, clean it up instead of trying to kill it
+      if (session.status === 'exited') {
+        ptyManager.cleanupSession(sessionId);
+        logger.log(chalk.yellow(`local session ${sessionId} cleaned up`));
+        res.json({ success: true, message: 'Session cleaned up' });
+      } else {
+        await ptyManager.killSession(sessionId, 'SIGTERM');
+        logger.log(chalk.yellow(`local session ${sessionId} killed`));
+        res.json({ success: true, message: 'Session killed' });
+      }
     } catch (error) {
       logger.error('error killing session:', error);
       if (error instanceof PtyError) {
@@ -846,7 +868,6 @@ export function createSessionRoutes(config: SessionRoutesConfig): Router {
 
     // Send initial connection event
     res.write(':ok\n\n');
-    // @ts-expect-error - flush exists but not in types
     if (res.flush) res.flush();
 
     // Add client to stream watcher
@@ -856,7 +877,6 @@ export function createSessionRoutes(config: SessionRoutesConfig): Router {
     // Send heartbeat every 30 seconds to keep connection alive
     const heartbeat = setInterval(() => {
       res.write(':heartbeat\n\n');
-      // @ts-expect-error - flush exists but not in types
       if (res.flush) res.flush();
     }, 30000);
 
@@ -1192,7 +1212,7 @@ function generateSessionId(): string {
 }
 
 // Request terminal spawn from Mac app via control socket
-async function requestTerminalSpawn(params: {
+export async function requestTerminalSpawn(params: {
   sessionId: string;
   sessionName: string;
   command: string[];
@@ -1232,7 +1252,7 @@ async function requestTerminalSpawn(params: {
       };
     }
 
-    const success = (response.payload as { success?: boolean })?.success === true;
+    const success = (response.payload as TerminalSpawnResponse)?.success === true;
     return {
       success,
       error: success ? undefined : 'Terminal spawn failed',

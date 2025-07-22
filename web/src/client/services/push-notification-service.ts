@@ -1,15 +1,12 @@
-import { PushNotificationPreferences, PushSubscription } from '../../shared/types.js';
-import { createLogger } from '../utils/logger.js';
-import { authClient } from './auth-client.js';
+import type { PushNotificationPreferences, PushSubscription } from '../../shared/types';
+import { createLogger } from '../utils/logger';
+import { authClient } from './auth-client';
 
 // Re-export types for components
-export { PushSubscription, PushNotificationPreferences };
+export type { PushSubscription, PushNotificationPreferences };
 export type NotificationPreferences = PushNotificationPreferences;
 
 const logger = createLogger('push-notification-service');
-
-// VAPID public key will be fetched from server
-let _VAPID_PUBLIC_KEY: string | null = null;
 
 type NotificationPermissionChangeCallback = (permission: NotificationPermission) => void;
 type SubscriptionChangeCallback = (subscription: PushSubscription | null) => void;
@@ -71,7 +68,7 @@ export class PushNotificationService {
         scope: '/',
       });
 
-      logger.log('service worker registered');
+      logger.log('service worker registered successfully');
 
       // Wait for service worker to be ready
       await navigator.serviceWorker.ready;
@@ -381,26 +378,60 @@ export class PushNotificationService {
   /**
    * Save notification preferences
    */
-  savePreferences(preferences: PushNotificationPreferences): void {
+  async savePreferences(preferences: PushNotificationPreferences): Promise<void> {
     try {
+      // Save to API for sync with macOS app
+      const response = await fetch('/api/preferences/notifications', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(preferences),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save preferences');
+      }
+
+      // Also save to localStorage as fallback
       localStorage.setItem('vibetunnel-notification-preferences', JSON.stringify(preferences));
       logger.debug('saved notification preferences');
     } catch (error) {
       logger.error('failed to save notification preferences:', error);
+      // Fall back to localStorage only
+      try {
+        localStorage.setItem('vibetunnel-notification-preferences', JSON.stringify(preferences));
+      } catch (localError) {
+        logger.error('failed to save to localStorage:', localError);
+      }
     }
   }
 
   /**
    * Load notification preferences
    */
-  loadPreferences(): PushNotificationPreferences {
+  async loadPreferences(): Promise<PushNotificationPreferences> {
+    try {
+      // Try to load from API first
+      const response = await fetch('/api/preferences/notifications');
+      if (response.ok) {
+        const preferences = await response.json();
+        // Update localStorage with server values
+        localStorage.setItem('vibetunnel-notification-preferences', JSON.stringify(preferences));
+        return preferences;
+      }
+    } catch (error) {
+      logger.error('failed to load notification preferences from API:', error);
+    }
+
+    // Fall back to localStorage
     try {
       const saved = localStorage.getItem('vibetunnel-notification-preferences');
       if (saved) {
         return { ...this.getDefaultPreferences(), ...JSON.parse(saved) };
       }
     } catch (error) {
-      logger.error('failed to load notification preferences:', error);
+      logger.error('failed to load notification preferences from localStorage:', error);
     }
     return this.getDefaultPreferences();
   }
@@ -414,6 +445,7 @@ export class PushNotificationService {
       sessionExit: true,
       sessionStart: false,
       sessionError: true,
+      commandNotifications: true,
       systemAlerts: true,
       soundEnabled: true,
       vibrationEnabled: true,
@@ -481,6 +513,9 @@ export class PushNotificationService {
         headers: {
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          endpoint: this.pushSubscription?.endpoint,
+        }),
       });
 
       if (!response.ok) {
@@ -544,7 +579,6 @@ export class PushNotificationService {
 
       this.vapidPublicKey = data.publicKey;
       this.pushNotificationsAvailable = true;
-      _VAPID_PUBLIC_KEY = data.publicKey; // For backward compatibility
 
       logger.log('VAPID public key fetched from server');
       logger.debug(`Public key: ${data.publicKey.substring(0, 20)}...`);

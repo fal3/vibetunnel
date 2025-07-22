@@ -21,12 +21,11 @@ export class InlineEdit extends LitElement {
     }
 
     .display-container {
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: 0.25rem;
       max-width: 100%;
       min-width: 0;
-      width: 100%;
     }
 
     .display-text {
@@ -34,7 +33,7 @@ export class InlineEdit extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
       min-width: 0;
-      flex: 1;
+      max-width: 100%;
     }
 
     .edit-icon {
@@ -69,8 +68,8 @@ export class InlineEdit extends LitElement {
     }
 
     input {
-      background: var(--dark-bg-tertiary, #1a1a1a);
-      border: 1px solid var(--dark-border, #333);
+      background: rgb(var(--color-bg-tertiary));
+      border: 1px solid rgb(var(--color-border));
       color: inherit;
       font: inherit;
       padding: 0.125rem 0.25rem;
@@ -81,7 +80,7 @@ export class InlineEdit extends LitElement {
     }
 
     input:focus {
-      border-color: var(--accent-green, #10b981);
+      border-color: rgb(var(--color-primary));
     }
 
     .action-buttons {
@@ -96,7 +95,7 @@ export class InlineEdit extends LitElement {
       cursor: pointer;
       padding: 0.125rem;
       border-radius: 0.25rem;
-      color: var(--dark-text-muted, #999);
+      color: rgb(var(--color-text-muted));
       transition: all 0.2s;
       display: flex;
       align-items: center;
@@ -106,24 +105,24 @@ export class InlineEdit extends LitElement {
     }
 
     button:hover {
-      background: var(--dark-bg-tertiary, #1a1a1a);
+      background: rgb(var(--color-bg-tertiary));
     }
 
     button.save {
-      color: var(--accent-green, #10b981);
+      color: rgb(var(--color-primary));
     }
 
     button.save:hover {
-      background: var(--accent-green, #10b981);
+      background: rgb(var(--color-primary));
       background-opacity: 0.2;
     }
 
     button.cancel {
-      color: var(--status-error, #ef4444);
+      color: rgb(var(--color-status-error));
     }
 
     button.cancel:hover {
-      background: var(--status-error, #ef4444);
+      background: rgb(var(--color-status-error));
       background-opacity: 0.2;
     }
   `;

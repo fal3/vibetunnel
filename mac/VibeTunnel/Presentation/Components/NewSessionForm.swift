@@ -15,11 +15,12 @@ struct NewSessionForm: View {
     private var sessionService
     @Environment(RepositoryDiscoveryService.self)
     private var repositoryDiscovery
+    @StateObject private var configManager = ConfigManager.shared
 
     // Form fields
     @State private var command = "zsh"
     @State private var sessionName = ""
-    @State private var workingDirectory = "~/"
+    @State private var workingDirectory = FilePathConstants.defaultRepositoryBasePath
     @State private var spawnWindow = true
     @State private var titleMode: TitleMode = .dynamic
 
@@ -28,7 +29,6 @@ struct NewSessionForm: View {
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var isHoveringCreate = false
-    @State private var showingRepositoryDropdown = false
     @FocusState private var focusedField: Field?
 
     enum Field: Hashable {
@@ -36,32 +36,6 @@ struct NewSessionForm: View {
         case name
         case directory
     }
-
-    enum TitleMode: String, CaseIterable {
-        case none = "none"
-        case filter = "filter"
-        case `static` = "static"
-        case dynamic = "dynamic"
-
-        var displayName: String {
-            switch self {
-            case .none: "None"
-            case .filter: "Filter"
-            case .static: "Static"
-            case .dynamic: "Dynamic"
-            }
-        }
-    }
-
-    /// Quick commands synced with frontend
-    private let quickCommands = [
-        ("claude", "✨"),
-        ("gemini", "✨"),
-        ("zsh", nil),
-        ("python3", nil),
-        ("node", nil),
-        ("pnpm run dev", nil)
-    ]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -147,8 +121,7 @@ struct NewSessionForm: View {
 
                         VStack(alignment: .leading, spacing: 0) {
                             HStack(spacing: 8) {
-                                TextField("~/", text: $workingDirectory)
-                                    .textFieldStyle(.roundedBorder)
+                                AutocompleteTextField(text: $workingDirectory, placeholder: "~/")
                                     .focused($focusedField, equals: .directory)
 
                                 Button(action: selectDirectory) {
@@ -160,29 +133,6 @@ struct NewSessionForm: View {
                                 }
                                 .buttonStyle(.borderless)
                                 .help("Choose directory")
-                                
-                                Button(action: { showingRepositoryDropdown.toggle() }) {
-                                    Image(systemName: "arrow.trianglehead.pull")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.secondary)
-                                        .animation(.easeInOut(duration: 0.2), value: showingRepositoryDropdown)
-                                        .frame(width: 20, height: 20)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.borderless)
-                                .help("Choose from repositories")
-                                .disabled(repositoryDiscovery.repositories.isEmpty || repositoryDiscovery.isDiscovering)
-                            }
-                            
-                            // Repository dropdown
-                            if showingRepositoryDropdown && !repositoryDiscovery.repositories.isEmpty {
-                                RepositoryDropdownList(
-                                    repositories: repositoryDiscovery.repositories,
-                                    isDiscovering: repositoryDiscovery.isDiscovering,
-                                    selectedPath: $workingDirectory,
-                                    isShowing: $showingRepositoryDropdown
-                                )
-                                .padding(.top, 4)
                             }
                         }
                     }
@@ -198,31 +148,31 @@ struct NewSessionForm: View {
                             GridItem(.flexible()),
                             GridItem(.flexible())
                         ], spacing: 8) {
-                            ForEach(quickCommands, id: \.0) { cmd in
+                            ForEach(configManager.quickStartCommands) { cmd in
                                 Button(action: {
-                                    command = cmd.0
+                                    command = cmd.command
                                     sessionName = ""
                                 }, label: {
-                                    HStack(spacing: 4) {
-                                        if let emoji = cmd.1 {
-                                            Text(emoji)
-                                                .font(.system(size: 12))
-                                        }
-                                        Text(cmd.0)
-                                            .font(.system(size: 11))
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.primary.opacity(0.05))
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-                                    )
+                                    Text(cmd.displayName)
+                                        .font(.system(size: 11))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
                                 })
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(command == cmd.command ? Color.accentColor.opacity(0.15) : Color.primary
+                                            .opacity(0.05)
+                                        )
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(
+                                            command == cmd.command ? Color.accentColor.opacity(0.5) : Color.primary
+                                                .opacity(0.1),
+                                            lineWidth: 1
+                                        )
+                                )
                                 .buttonStyle(.plain)
                             }
                         }
@@ -329,8 +279,9 @@ struct NewSessionForm: View {
                 .foregroundColor(command.isEmpty || workingDirectory.isEmpty ? .secondary.opacity(0.5) : .secondary)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(isHoveringCreate && !command.isEmpty && !workingDirectory.isEmpty ? Color.accentColor
-                            .opacity(0.05) : Color.clear
+                        .fill(
+                            isHoveringCreate && !command.isEmpty && !workingDirectory.isEmpty ? Color.accentColor
+                                .opacity(0.05) : Color.clear
                         )
                         .animation(.easeInOut(duration: 0.2), value: isHoveringCreate)
                 )
@@ -349,11 +300,9 @@ struct NewSessionForm: View {
         .onAppear {
             loadPreferences()
             focusedField = .name
-            
         }
         .task {
-            let repositoryBasePath = AppConstants.stringValue(for: AppConstants.UserDefaultsKeys.repositoryBasePath)
-            await repositoryDiscovery.discoverRepositories(in: repositoryBasePath)
+            await repositoryDiscovery.discoverRepositories(in: configManager.repositoryBasePath)
         }
         .alert("Error", isPresented: $showError) {
             Button("OK") {}
@@ -477,13 +426,15 @@ struct NewSessionForm: View {
         if let savedCommand = UserDefaults.standard.string(forKey: AppConstants.UserDefaultsKeys.newSessionCommand) {
             command = savedCommand
         }
-      
+
         // Restore last used working directory, not repository base path
-        if let savedDirectory = UserDefaults.standard.string(forKey: AppConstants.UserDefaultsKeys.newSessionWorkingDirectory) {
+        if let savedDirectory = UserDefaults.standard
+            .string(forKey: AppConstants.UserDefaultsKeys.newSessionWorkingDirectory)
+        {
             workingDirectory = savedDirectory
         } else {
-            // Default to home directory if never set
-            workingDirectory = "~/"
+            // Default to repository base path if never set
+            workingDirectory = configManager.sessionWorkingDirectory
         }
 
         // Check if spawn window preference has been explicitly set
@@ -516,7 +467,7 @@ private struct RepositoryDropdownList: View {
     let isDiscovering: Bool
     @Binding var selectedPath: String
     @Binding var isShowing: Bool
-    
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
@@ -525,20 +476,20 @@ private struct RepositoryDropdownList: View {
                         Button(action: {
                             selectedPath = repository.path
                             isShowing = false
-                        }) {
+                        }, label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(repository.displayName)
                                         .font(.system(size: 11, weight: .medium))
                                         .foregroundColor(.primary)
-                                    
+
                                     Text(repository.relativePath)
                                         .font(.system(size: 10))
                                         .foregroundColor(.secondary)
                                 }
-                                
+
                                 Spacer()
-                                
+
                                 Text(repository.formattedLastModified)
                                     .font(.system(size: 10))
                                     .foregroundColor(.secondary)
@@ -550,14 +501,14 @@ private struct RepositoryDropdownList: View {
                                     .fill(Color.clear)
                             )
                             .contentShape(Rectangle())
-                        }
+                        })
                         .buttonStyle(.plain)
                         .onHover { hovering in
                             if hovering {
                                 // Add hover effect if needed
                             }
                         }
-                        
+
                         if repository.id != repositories.last?.id {
                             Divider()
                                 .padding(.horizontal, 8)

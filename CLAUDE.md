@@ -12,7 +12,7 @@ VibeTunnel is a macOS application that allows users to access their terminal ses
 ## Critical Development Rules
 
 ### Release Process
-When the user says "release" or asks to create a release, ALWAYS read and follow `mac/docs/release.md` for the complete release process.
+When the user says "release" or asks to create a release, ALWAYS read and follow `docs/RELEASE.md` for the complete release process.
 
 ### ABSOLUTE CARDINAL RULES - VIOLATION MEANS IMMEDIATE FAILURE
 
@@ -35,17 +35,31 @@ When the user says "release" or asks to create a release, ALWAYS read and follow
    - DO NOT create new versions with different file names (e.g., file_v2.ts, file_new.ts)
    - Users hate having to manually clean up duplicate files
 
-5. **NEVER restart VibeTunnel directly with pkill/open - ALWAYS clean and rebuild**
-   - The Mac app builds and embeds the web server during the Xcode build process
-   - Simply restarting the app will serve a STALE, CACHED version of the server
-   - You MUST clean and rebuild with Xcode to get the latest server code
-   - Always use: clean → build → run (the build process rebuilds the embedded server)
+5. **Web Development Workflow - Development vs Production Mode**
+   - **Production Mode**: Mac app embeds a pre-built web server during Xcode build
+     - Every web change requires: clean → build → run (rebuilds embedded server)
+     - Simply restarting serves STALE, CACHED version
+   - **Development Mode** (recommended for web development):
+     - Enable "Use Development Server" in VibeTunnel Settings → Debug
+     - Mac app runs `pnpm run dev` instead of embedded server
+     - Provides hot reload - web changes automatically rebuild without Mac app rebuild
+     - Restart VibeTunnel server (not full rebuild) to pick up web changes
+6. **Never kill all sessions**
+   - You are running inside a session yourself; killing all sessions would terminate your own process
+
+7. **NEVER rename docs.json to mint.json**
+   - The Mintlify configuration file is called `docs.json` in this project
+   - Do NOT rename it to mint.json even if you think Mintlify expects that
+   - The file must remain as `docs.json`
+   - For Mintlify documentation reference, see: https://mintlify.com/docs/llms.txt
 
 ### Git Workflow Reminders
 - Our workflow: start from main → create branch → make PR → merge → return to main
 - PRs sometimes contain multiple different features and that's okay
 - Always check current branch with `git branch` before making changes
 - If unsure about branching, ASK THE USER FIRST
+- **"Adopt" means REVIEW, not merge!** When asked to "adopt" a PR, switch to its branch and review the changes. NEVER merge without explicit permission.
+- **"Rebase main" means rebase CURRENT branch with main!** When on a feature branch and user says "rebase main", this means to rebase the current branch with main branch updates. NEVER switch to main branch. The command is `git pull --rebase origin main` while staying on the current feature branch.
 
 ### Terminal Title Management with VT
 
@@ -58,13 +72,19 @@ When creating pull requests, use the `vt` command to update the terminal title:
 
 ## Web Development Commands
 
-**IMPORTANT**: The user has `pnpm run dev` running - DO NOT manually build the web project!
+**DEVELOPMENT MODES**:
+- **Standalone Development**: `pnpm run dev` runs independently on port 4020
+- **Mac App Integration**: Enable "Development Server" in VibeTunnel settings (recommended)
+  - Mac app automatically runs `pnpm run dev` and manages the process
+  - Provides seamless integration with Mac app features
+  - Hot reload works with full VibeTunnel functionality
 
 In the `web/` directory:
 
 ```bash
-# Development (user already has this running)
-pnpm run dev
+# Development
+pnpm run dev                   # Standalone development server (port 4020)
+pnpm run dev --port 4021       # Alternative port for external device testing
 
 # Code quality (MUST run before commit)
 pnpm run lint          # Check for linting errors
@@ -116,6 +136,13 @@ In the `mac/` directory:
 - **Never run tests unless explicitly asked**
 - Mac tests: Swift Testing framework in `VibeTunnelTests/`
 - Web tests: Vitest in `web/src/test/`
+
+## CI Pipeline
+
+The CI workflow automatically runs both Node.js and Mac builds:
+- **Node.js CI**: Runs for web OR Mac file changes to ensure web artifacts are always available
+- **Mac CI**: Downloads web artifacts from Node.js CI, with fallback to build locally if missing
+- **Cross-dependency**: Mac builds require web artifacts, so Node.js CI must complete first
 
 ## Testing on External Devices (iPad, Safari, etc.)
 
@@ -229,7 +256,7 @@ For tasks requiring massive context windows (up to 2M tokens) or full codebase a
 
 - Architecture Details: `docs/ARCHITECTURE.md`
 - API Specifications: `docs/spec.md`
-- Server Implementation Guide: `web/spec.md`
+- Server Implementation Guide: `web/docs/spec.md`
 - Build Configuration: `web/package.json`, `mac/Package.swift`
 - External Device Testing: `docs/TESTING_EXTERNAL_DEVICES.md`
 - Gemini CLI Instructions: `docs/gemini.md`
