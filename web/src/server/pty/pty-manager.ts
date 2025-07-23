@@ -457,14 +457,18 @@ export class PtyManager extends EventEmitter {
 
       // Emit session started event
       this.emit('sessionStarted', sessionId, sessionInfo.name || sessionInfo.command.join(' '));
-      
+
       // Send notification to Mac app
       if (controlUnixHandler.isMacAppConnected()) {
-        controlUnixHandler.sendNotification('Session Started', sessionInfo.name || sessionInfo.command.join(' '), {
-          type: 'session-start',
-          sessionId: sessionId,
-          sessionName: sessionInfo.name || sessionInfo.command.join(' '),
-        });
+        controlUnixHandler.sendNotification(
+          'Session Started',
+          sessionInfo.name || sessionInfo.command.join(' '),
+          {
+            type: 'session-start',
+            sessionId: sessionId,
+            sessionName: sessionInfo.name || sessionInfo.command.join(' '),
+          }
+        );
       }
 
       return {
@@ -582,7 +586,7 @@ export class PtyManager extends EventEmitter {
                 session.id,
                 session.sessionInfo.name || session.sessionInfo.command.join(' ')
               );
-              
+
               // Send notification to Mac app directly
               if (controlUnixHandler.isMacAppConnected()) {
                 controlUnixHandler.sendNotification('Your Turn', 'Claude has finished responding', {
@@ -702,14 +706,18 @@ export class PtyManager extends EventEmitter {
           session.sessionInfo.name || session.sessionInfo.command.join(' '),
           exitCode
         );
-        
+
         // Send notification to Mac app
         if (controlUnixHandler.isMacAppConnected()) {
-          controlUnixHandler.sendNotification('Session Ended', session.sessionInfo.name || session.sessionInfo.command.join(' '), {
-            type: 'session-exit',
-            sessionId: session.id,
-            sessionName: session.sessionInfo.name || session.sessionInfo.command.join(' '),
-          });
+          controlUnixHandler.sendNotification(
+            'Session Ended',
+            session.sessionInfo.name || session.sessionInfo.command.join(' '),
+            {
+              type: 'session-exit',
+              sessionId: session.id,
+              sessionName: session.sessionInfo.name || session.sessionInfo.command.join(' '),
+            }
+          );
         }
 
         // Call exit callback if provided (for fwd.ts)

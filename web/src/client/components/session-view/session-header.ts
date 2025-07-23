@@ -13,7 +13,6 @@ import '../inline-edit.js';
 import '../notification-status.js';
 import '../keyboard-capture-indicator.js';
 import { authClient } from '../../services/auth-client.js';
-import { isAIAssistantSession, sendAIPrompt } from '../../utils/ai-sessions.js';
 import { createLogger } from '../../utils/logger.js';
 import './mobile-menu.js';
 import '../theme-toggle-icon.js';
@@ -178,46 +177,6 @@ export class SessionHeader extends LitElement {
                   }
                   .onSave=${(newName: string) => this.handleRename(newName)}
                 ></inline-edit>
-                ${
-                  isAIAssistantSession(this.session)
-                    ? html`
-                      <button
-                        class="bg-transparent border-0 p-0 cursor-pointer transition-opacity duration-200 text-primary magic-button flex-shrink-0 ${this.isHovered ? 'opacity-50 hover:opacity-100' : 'opacity-0'} ml-1"
-                        @click=${(e: Event) => {
-                          e.stopPropagation();
-                          this.handleMagicButton();
-                        }}
-                        title="Send prompt to update terminal title"
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                          <!-- Wand -->
-                          <path d="M9.5 21.5L21.5 9.5a1 1 0 000-1.414l-1.086-1.086a1 1 0 00-1.414 0L7 19l2.5 2.5z" opacity="0.9"/>
-                          <path d="M6 18l-1.5 3.5a.5.5 0 00.7.7L8.5 21l-2.5-3z" opacity="0.9"/>
-                          <!-- Sparkles/Rays -->
-                          <circle cx="8" cy="4" r="1"/>
-                          <circle cx="4" cy="8" r="1"/>
-                          <circle cx="16" cy="4" r="1"/>
-                          <circle cx="20" cy="8" r="1"/>
-                          <circle cx="12" cy="2" r=".5"/>
-                          <circle cx="2" cy="12" r=".5"/>
-                          <circle cx="22" cy="12" r=".5"/>
-                          <circle cx="18" cy="2" r=".5"/>
-                        </svg>
-                      </button>
-                      <style>
-                        /* Always show magic button on touch devices */
-                        @media (hover: none) and (pointer: coarse) {
-                          .magic-button {
-                            opacity: 0.5 !important;
-                          }
-                          .magic-button:hover {
-                            opacity: 1 !important;
-                          }
-                        }
-                      </style>
-                    `
-                    : ''
-                }
               </div>
             </div>
             <div class="text-xs opacity-75 mt-0.5 truncate">
@@ -324,13 +283,7 @@ export class SessionHeader extends LitElement {
   }
 
   private handleMagicButton() {
-    if (!this.session) return;
-
-    logger.log('Magic button clicked for session', this.session.id);
-
-    sendAIPrompt(this.session.id, authClient).catch((error) => {
-      logger.error('Failed to send AI prompt', error);
-    });
+    logger.debug('Magic button clicked but AI functionality has been removed');
   }
 
   private handleMouseEnter = () => {

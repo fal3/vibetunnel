@@ -7,7 +7,6 @@
 import { html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { AuthClient } from '../services/auth-client.js';
-import { sendAIPrompt } from '../utils/ai-sessions.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('magic-wand-button');
@@ -35,7 +34,7 @@ export class MagicWandButton extends LitElement {
     this.sending = true;
 
     try {
-      await sendAIPrompt(this.sessionId, this.authClient);
+      logger.debug('Magic wand button clicked but AI functionality has been removed');
 
       // Dispatch success event
       this.dispatchEvent(

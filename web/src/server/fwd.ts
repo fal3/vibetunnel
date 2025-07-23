@@ -20,7 +20,6 @@ import { PtyManager } from './pty/index.js';
 import { SessionManager } from './pty/session-manager.js';
 import { VibeTunnelSocketClient } from './pty/socket-client.js';
 import { ActivityDetector } from './utils/activity-detector.js';
-import { checkAndPatchClaude } from './utils/claude-patcher.js';
 import {
   closeLogger,
   createLogger,
@@ -289,22 +288,13 @@ export async function startVibeTunnelForward(args: string[]) {
     }
   }
 
-  let command = remainingArgs;
+  const command = remainingArgs;
 
   if (command.length === 0) {
     logger.error('No command specified');
     showUsage();
     closeLogger();
     process.exit(1);
-  }
-
-  // Check if this is Claude and patch it if necessary (only in debug mode)
-  if (process.env.VIBETUNNEL_DEBUG === '1' || process.env.VIBETUNNEL_DEBUG === 'true') {
-    const patchedCommand = checkAndPatchClaude(command);
-    if (patchedCommand !== command) {
-      command = patchedCommand;
-      logger.debug(`Command updated after patching`);
-    }
   }
 
   // Auto-select dynamic mode for Claude if no mode was explicitly set

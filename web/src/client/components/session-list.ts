@@ -25,7 +25,6 @@ import './session-card.js';
 import './inline-edit.js';
 import { formatSessionDuration } from '../../shared/utils/time.js';
 import { sessionActionService } from '../services/session-action-service.js';
-import { sendAIPrompt } from '../utils/ai-sessions.js';
 import { Z_INDEX } from '../utils/constants.js';
 import { createLogger } from '../utils/logger.js';
 import { formatPathForDisplay } from '../utils/path-utils.js';
@@ -285,7 +284,7 @@ export class SessionList extends LitElement {
 
   private async handleSendAIPrompt(sessionId: string) {
     try {
-      await sendAIPrompt(sessionId, this.authClient);
+      logger.debug('AI prompt requested but AI functionality has been removed');
     } catch (error) {
       logger.error('Failed to send AI prompt', error);
       this.dispatchEvent(

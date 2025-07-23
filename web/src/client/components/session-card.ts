@@ -15,7 +15,6 @@ import { customElement, property, state } from 'lit/decorators.js';
 import type { Session } from '../../shared/types.js';
 import type { AuthClient } from '../services/auth-client.js';
 import { sessionActionService } from '../services/session-action-service.js';
-import { isAIAssistantSession, sendAIPrompt } from '../utils/ai-sessions.js';
 import { createLogger } from '../utils/logger.js';
 import { copyToClipboard } from '../utils/path-utils.js';
 import { TerminalPreferencesManager } from '../utils/terminal-preferences.js';
@@ -26,30 +25,6 @@ import './vibe-terminal-buffer.js';
 import './copy-icon.js';
 import './clickable-path.js';
 import './inline-edit.js';
-
-// Magic wand icon constant
-const MAGIC_WAND_ICON = html`
-  <svg
-    class="w-5 h-5"
-    fill="none"
-    stroke="currentColor"
-    viewBox="0 0 24 24"
-  >
-    <path
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      stroke-width="2"
-      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-    />
-    <path
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      stroke-width="1.5"
-      d="M12 8l-2 2m4-2l-2 2m4 0l-2 2"
-      opacity="0.6"
-    />
-  </svg>
-`;
 
 @customElement('session-card')
 export class SessionCard extends LitElement {
@@ -340,7 +315,7 @@ export class SessionCard extends LitElement {
     logger.log('Magic button clicked for session', this.session.id);
 
     try {
-      await sendAIPrompt(this.session.id, this.authClient);
+      logger.debug('Magic button clicked but AI functionality has been removed');
     } catch (error) {
       logger.error('Failed to send AI prompt', error);
       this.dispatchEvent(
@@ -419,29 +394,6 @@ export class SessionCard extends LitElement {
             ></inline-edit>
           </div>
           <div class="flex items-center gap-1 flex-shrink-0">
-            ${
-              this.session.status === 'running' && isAIAssistantSession(this.session)
-                ? html`
-                  <button
-                    class="bg-transparent border-0 p-0 cursor-pointer opacity-50 hover:opacity-100 transition-opacity duration-200 text-primary"
-                    @click=${(e: Event) => {
-                      e.stopPropagation();
-                      this.handleMagicButton();
-                    }}
-                    id="session-magic-button"
-                    title="Send prompt to update terminal title"
-                    aria-label="Send magic prompt to AI assistant"
-                    ?disabled=${this.isSendingPrompt}
-                  >
-                    ${
-                      this.isSendingPrompt
-                        ? html`<span class="block w-5 h-5 flex items-center justify-center animate-spin">⠋</span>`
-                        : MAGIC_WAND_ICON
-                    }
-                  </button>
-                `
-                : ''
-            }
             ${
               this.session.status === 'running' || this.session.status === 'exited'
                 ? html`
