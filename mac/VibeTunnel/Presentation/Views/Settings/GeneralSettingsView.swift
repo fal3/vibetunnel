@@ -97,15 +97,16 @@ struct GeneralSettingsView: View {
                                 if newValue {
                                     Task {
                                         // Request permissions and show test notification
-                                        let granted = await NotificationService.shared.requestPermissionAndShowTestNotification()
-                                        
+                                        let granted = await NotificationService.shared
+                                            .requestPermissionAndShowTestNotification()
+
                                         if granted {
                                             await NotificationService.shared.start()
                                         } else {
                                             // If permission denied, turn toggle back off
                                             await MainActor.run {
                                                 showNotifications = false
-                                                
+
                                                 // Show alert explaining the situation
                                                 let alert = NSAlert()
                                                 alert.messageText = "Notification Permission Required"
@@ -113,7 +114,7 @@ struct GeneralSettingsView: View {
                                                 alert.alertStyle = .informational
                                                 alert.addButton(withTitle: "Open System Settings")
                                                 alert.addButton(withTitle: "Cancel")
-                                                
+
                                                 if alert.runModal() == .alertFirstButtonReturn {
                                                     // Settings will already be open from the service
                                                 }
@@ -314,16 +315,16 @@ private struct NotificationCheckbox: View {
             Task { @MainActor in
                 // Request permissions and enable main toggle
                 let granted = await NotificationService.shared.requestPermissionAndShowTestNotification()
-                
+
                 if granted {
                     // Enable main notifications toggle
                     UserDefaults.standard.set(true, forKey: "showNotifications")
-                    
+
                     // Enable this specific checkbox
                     isChecked = true
                     UserDefaults.standard.set(isChecked, forKey: key)
                     updateAction()
-                    
+
                     // Start notification service
                     await NotificationService.shared.start()
                 } else {
