@@ -13,10 +13,9 @@ import * as net from 'net';
 import type { IPty } from 'node-pty';
 import * as path from 'path';
 
-// Import node-pty with fallback support
+// Import node-pty
 let pty: typeof import('node-pty');
 
-// Dynamic import will be done in initialization
 import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
 import type {
@@ -114,7 +113,7 @@ export class PtyManager extends EventEmitter {
   }
 
   /**
-   * Initialize PtyManager with fallback support for node-pty
+   * Initialize PtyManager by loading node-pty
    */
   public static async initialize(): Promise<void> {
     if (PtyManager.initialized) {
@@ -245,9 +244,7 @@ export class PtyManager extends EventEmitter {
   ): Promise<SessionCreationResult> {
     const sessionId = options.sessionId || uuidv4();
     const sessionName = options.name || path.basename(command[0]);
-    // Correctly determine the web directory path
-    const webDir = path.resolve(__dirname, '..', '..');
-    const workingDir = options.workingDir || webDir;
+    const workingDir = options.workingDir || process.cwd();
     const term = this.defaultTerm;
     // For external spawns without dimensions, let node-pty use the terminal's natural size
     // For other cases, use reasonable defaults
@@ -457,14 +454,18 @@ export class PtyManager extends EventEmitter {
 
       // Emit session started event
       this.emit('sessionStarted', sessionId, sessionInfo.name || sessionInfo.command.join(' '));
-      
+
       // Send notification to Mac app
       if (controlUnixHandler.isMacAppConnected()) {
-        controlUnixHandler.sendNotification('Session Started', sessionInfo.name || sessionInfo.command.join(' '), {
-          type: 'session-start',
-          sessionId: sessionId,
-          sessionName: sessionInfo.name || sessionInfo.command.join(' '),
-        });
+        controlUnixHandler.sendNotification(
+          'Session Started',
+          sessionInfo.name || sessionInfo.command.join(' '),
+          {
+            type: 'session-start',
+            sessionId: sessionId,
+            sessionName: sessionInfo.name || sessionInfo.command.join(' '),
+          }
+        );
       }
 
       return {
@@ -582,7 +583,7 @@ export class PtyManager extends EventEmitter {
                 session.id,
                 session.sessionInfo.name || session.sessionInfo.command.join(' ')
               );
-              
+
               // Send notification to Mac app directly
               if (controlUnixHandler.isMacAppConnected()) {
                 controlUnixHandler.sendNotification('Your Turn', 'Claude has finished responding', {
@@ -702,14 +703,18 @@ export class PtyManager extends EventEmitter {
           session.sessionInfo.name || session.sessionInfo.command.join(' '),
           exitCode
         );
-        
+
         // Send notification to Mac app
         if (controlUnixHandler.isMacAppConnected()) {
-          controlUnixHandler.sendNotification('Session Ended', session.sessionInfo.name || session.sessionInfo.command.join(' '), {
-            type: 'session-exit',
-            sessionId: session.id,
-            sessionName: session.sessionInfo.name || session.sessionInfo.command.join(' '),
-          });
+          controlUnixHandler.sendNotification(
+            'Session Ended',
+            session.sessionInfo.name || session.sessionInfo.command.join(' '),
+            {
+              type: 'session-exit',
+              sessionId: session.id,
+              sessionName: session.sessionInfo.name || session.sessionInfo.command.join(' '),
+            }
+          );
         }
 
         // Call exit callback if provided (for fwd.ts)

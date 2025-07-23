@@ -99,11 +99,16 @@ describe('Events Router', () => {
         sessionName: 'Test Session',
         exitCode: 0,
       };
-      mockPtyManager.emit('sessionExited', eventData.sessionId);
+      mockPtyManager.emit(
+        'sessionExited',
+        eventData.sessionId,
+        eventData.sessionName,
+        eventData.exitCode
+      );
 
       // Verify SSE was sent
       expect(mockResponse.write).toHaveBeenCalledWith(
-        expect.stringContaining('event: sessionExit\n')
+        expect.stringContaining('event: session-exit\n')
       );
       expect(mockResponse.write).toHaveBeenCalledWith(
         expect.stringContaining(`data: ${JSON.stringify(eventData)}\n\n`)

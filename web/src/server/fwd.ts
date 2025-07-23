@@ -320,7 +320,7 @@ export async function startVibeTunnelForward(args: string[]) {
 
   const cwd = process.cwd();
 
-  // Initialize PTY manager with fallback support
+  // Initialize PTY manager
   const controlPath = path.join(os.homedir(), '.vibetunnel', 'control');
   logger.debug(`Control path: ${controlPath}`);
 

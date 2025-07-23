@@ -28,17 +28,11 @@ final class NotificationService: NSObject {
         var claudeTurn: Bool = true
 
         init() {
-            // Load from UserDefaults
             let defaults = UserDefaults.standard
-            self.sessionStart = defaults.bool(forKey: "notifications.sessionStart")
-            self.sessionExit = defaults.bool(forKey: "notifications.sessionExit")
-            self.commandCompletion = defaults.bool(forKey: "notifications.commandCompletion")
-            self.commandError = defaults.bool(forKey: "notifications.commandError")
-            self.bell = defaults.bool(forKey: "notifications.bell")
-            self.claudeTurn = defaults.bool(forKey: "notifications.claudeTurn")
-
-            // Set defaults if not set
+            
+            // Check if this is first launch
             if !defaults.bool(forKey: "notifications.initialized") {
+                // First launch - set defaults
                 defaults.set(true, forKey: "notifications.sessionStart")
                 defaults.set(true, forKey: "notifications.sessionExit")
                 defaults.set(true, forKey: "notifications.commandCompletion")
@@ -46,6 +40,22 @@ final class NotificationService: NSObject {
                 defaults.set(true, forKey: "notifications.bell")
                 defaults.set(true, forKey: "notifications.claudeTurn")
                 defaults.set(true, forKey: "notifications.initialized")
+                
+                // Use default values (all true)
+                self.sessionStart = true
+                self.sessionExit = true
+                self.commandCompletion = true
+                self.commandError = true
+                self.bell = true
+                self.claudeTurn = true
+            } else {
+                // Load from UserDefaults
+                self.sessionStart = defaults.bool(forKey: "notifications.sessionStart")
+                self.sessionExit = defaults.bool(forKey: "notifications.sessionExit")
+                self.commandCompletion = defaults.bool(forKey: "notifications.commandCompletion")
+                self.commandError = defaults.bool(forKey: "notifications.commandError")
+                self.bell = defaults.bool(forKey: "notifications.bell")
+                self.claudeTurn = defaults.bool(forKey: "notifications.claudeTurn")
             }
         }
 
