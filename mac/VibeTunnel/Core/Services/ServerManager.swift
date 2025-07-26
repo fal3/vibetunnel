@@ -246,6 +246,9 @@ class ServerManager {
                 // Reset crash counter on successful start
                 consecutiveCrashes = 0
 
+                // Post notification that server state has changed
+                NotificationCenter.default.post(name: .serverStateChanged, object: nil)
+
                 // Start notification service
                 await NotificationService.shared.start()
             } else {

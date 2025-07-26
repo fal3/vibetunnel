@@ -234,7 +234,7 @@ final class SessionMonitor {
             if previousActive && !currentActive && !alreadyNotified {
                 logger.info("🔔 Detected Claude transition to idle for session: \(id)")
                 let sessionName = newSession.name ?? newSession.command.joined(separator: " ")
-                await NotificationService.shared.sendCommandCompletionNotification(
+                NotificationService.shared.sendCommandCompletionNotification(
                     command: sessionName,
                     duration: 0
                 )
