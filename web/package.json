@@ -77,7 +77,8 @@
     "test:e2e:parallel": "PLAYWRIGHT_PARALLEL=true playwright test",
     "test:e2e:parallel:headed": "PLAYWRIGHT_PARALLEL=true playwright test --headed",
     "test:e2e:parallel:workers": "PLAYWRIGHT_PARALLEL=true PLAYWRIGHT_WORKERS=4 playwright test",
-    "prepare": "husky"
+    "prepare": "husky",
+    "debug-notifications": "tsx src/cli/debug-notifications.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
