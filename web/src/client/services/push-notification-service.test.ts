@@ -534,7 +534,7 @@ describe('PushNotificationService', () => {
       await pushNotificationService.initialize();
 
       // Capture the event handler
-      let testNotificationHandler: (data: any) => void;
+      let testNotificationHandler: ((data: unknown) => void) | undefined;
       (notificationEventService.on as vi.Mock).mockImplementation((event, handler) => {
         if (event === 'test-notification') {
           testNotificationHandler = handler;
@@ -547,7 +547,7 @@ describe('PushNotificationService', () => {
       // Simulate receiving the event
       await new Promise((resolve) => setTimeout(resolve, 100)); // allow time for listener to be registered
 
-      expect(testNotificationHandler!).toBeDefined();
+      expect(testNotificationHandler).toBeDefined();
       testNotificationHandler?.({
         title: 'VibeTunnel Test',
         body: 'Push notifications are working correctly!',
@@ -575,7 +575,7 @@ describe('PushNotificationService', () => {
       await pushNotificationService.initialize();
 
       // Capture the event handler
-      let testNotificationHandler: (data: any) => void;
+      let testNotificationHandler: ((data: unknown) => void) | undefined;
       (notificationEventService.on as vi.Mock).mockImplementation((event, handler) => {
         if (event === 'test-notification') {
           testNotificationHandler = handler;
@@ -588,7 +588,7 @@ describe('PushNotificationService', () => {
       // Simulate receiving the event
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      expect(testNotificationHandler!).toBeDefined();
+      expect(testNotificationHandler).toBeDefined();
       testNotificationHandler?.({});
 
       await testPromise;

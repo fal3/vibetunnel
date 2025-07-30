@@ -136,7 +136,7 @@ export function createPushRoutes(options: CreatePushRoutesOptions): Router {
   /**
    * Send test notification
    */
-  router.post('/push/test', async (_req: Request, res: Response) => {
+  router.post('/push/test', async (req: Request, res: Response) => {
     if (!pushNotificationService) {
       return res.status(503).json({
         error: 'Push notifications not initialized',
@@ -145,10 +145,12 @@ export function createPushRoutes(options: CreatePushRoutesOptions): Router {
     }
 
     try {
+      const { message } = req.body;
+
       const result = await pushNotificationService.sendNotification({
         type: 'test',
         title: '🔔 Test Notification',
-        body: 'This is a test notification from VibeTunnel',
+        body: message || 'This is a test notification from VibeTunnel',
         icon: '/apple-touch-icon.png',
         badge: '/favicon-32.png',
         tag: 'vibetunnel-test',
