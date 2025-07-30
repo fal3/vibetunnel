@@ -116,6 +116,10 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
         UNUserNotificationCenter.current().delegate = self
         logger.info("✅ NotificationService set as UNUserNotificationCenter delegate in start()")
         
+        // Debug: Log current delegate to verify it's set
+        let currentDelegate = UNUserNotificationCenter.current().delegate
+        logger.info("🔍 Current UNUserNotificationCenter delegate: \(String(describing: currentDelegate))")
+        
         // Check if notifications are enabled in config
         guard let configProvider = configProvider, configProvider.notificationsEnabled else {
             logger.info("📴 Notifications are disabled in config, skipping SSE connection")

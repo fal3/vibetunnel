@@ -1,7 +1,10 @@
 import type { PushSubscription } from '../../shared/types';
 import { HttpMethod } from '../../shared/types';
 import type { NotificationPreferences } from '../../types/config.js';
-import { DEFAULT_NOTIFICATION_PREFERENCES, RECOMMENDED_NOTIFICATION_PREFERENCES } from '../../types/config.js';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  RECOMMENDED_NOTIFICATION_PREFERENCES,
+} from '../../types/config.js';
 import { createLogger } from '../utils/logger';
 import { authClient } from './auth-client';
 import { notificationEventService } from './notification-event-service';
@@ -85,6 +88,11 @@ export class PushNotificationService {
 
       // Get existing subscription if any
       this.pushSubscription = await this.serviceWorkerRegistration.pushManager.getSubscription();
+
+      logger.log('Existing push subscription found:', {
+        hasSubscription: !!this.pushSubscription,
+        endpoint: this.pushSubscription?.endpoint?.substring(0, 50) + '...',
+      });
 
       // Listen for service worker messages
       navigator.serviceWorker.addEventListener(
@@ -173,6 +181,14 @@ export class PushNotificationService {
 
       // Load saved preferences
       const preferences = await this.loadPreferences();
+
+      logger.log('Auto-resubscribe checking preferences:', {
+        enabled: preferences.enabled,
+        hasPermission: this.getPermission() === 'granted',
+        hasServiceWorker: !!this.serviceWorkerRegistration,
+        hasVapidKey: !!this.vapidPublicKey,
+        hasExistingSubscription: !!this.pushSubscription,
+      });
 
       // Check if notifications were previously enabled
       if (preferences.enabled) {
@@ -362,6 +378,14 @@ export class PushNotificationService {
       'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
     if (!hasBasicSupport) {
+      return false;
+    }
+
+    // Check if we're on HTTPS or localhost
+    // Service workers require HTTPS except for localhost/127.0.0.1
+    const isSecureContext = window.isSecureContext;
+    if (!isSecureContext) {
+      logger.warn('Push notifications require HTTPS or localhost');
       return false;
     }
 

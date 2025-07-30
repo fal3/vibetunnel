@@ -1,7 +1,10 @@
 import { html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { DEFAULT_REPOSITORY_BASE_PATH } from '../../shared/constants.js';
-import { DEFAULT_NOTIFICATION_PREFERENCES, RECOMMENDED_NOTIFICATION_PREFERENCES } from '../../types/config.js';
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  RECOMMENDED_NOTIFICATION_PREFERENCES,
+} from '../../types/config.js';
 import type { AuthClient } from '../services/auth-client.js';
 import {
   type NotificationPreferences,
@@ -588,7 +591,16 @@ export class Settings extends LitElement {
                         Tap the share button in Safari and select "Add to Home Screen" to enable push notifications.
                       </p>
                     `
-                    : html`
+                    : !window.isSecureContext
+                      ? html`
+                      <p class="text-sm text-status-warning mb-2">
+                        Push notifications require HTTPS.
+                      </p>
+                      <p class="text-xs text-status-warning opacity-80">
+                        Access VibeTunnel via https:// or use localhost/127.0.0.1 to enable notifications.
+                      </p>
+                    `
+                      : html`
                       <p class="text-sm text-status-warning">
                         Push notifications are not supported in this browser.
                       </p>
