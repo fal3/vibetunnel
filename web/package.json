@@ -79,8 +79,7 @@
     "test:e2e:parallel:workers": "PLAYWRIGHT_PARALLEL=true PLAYWRIGHT_WORKERS=4 playwright test",
     "test:e2e:fast": "./scripts/test-fast.sh",
     "test:e2e:perf": "playwright test --config=playwright.config.performance.ts",
-    "prepare": "husky",
-    "debug-notifications": "tsx src/cli/debug-notifications.ts"
+    "prepare": "husky"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
