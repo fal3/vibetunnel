@@ -296,7 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 statusBarController?.updateStatusItemDisplay()
 
                 // Session monitoring starts automatically
-                
+
                 // NotificationService is started by ServerManager when the server is ready
             } else {
                 logger.error("HTTP server failed to start")

@@ -948,6 +948,86 @@ sudo tccutil reset ScreenCapture sh.vibetunnel.vibetunnel.debug  # For debug bui
 sudo tccutil reset AppleEvents
 ```
 
+## Logging and Privacy
+
+VibeTunnel uses Apple's unified logging system with the subsystem `sh.vibetunnel.vibetunnel`. By default, macOS redacts sensitive runtime data in logs, showing `<private>` instead of actual values. This is a privacy feature to prevent accidental exposure of sensitive information.
+
+### Bundle Identifiers
+
+VibeTunnel uses the following bundle identifiers:
+
+**Production:**
+- `sh.vibetunnel.vibetunnel` - Main macOS app and logging subsystem
+- `sh.vibetunnel.vibetunnel.debug` - Debug builds of the macOS app
+
+**Testing:**
+- `sh.vibetunnel.vibetunnel.tests` - macOS test suite
+- `sh.vibetunnel.ios.tests` - iOS test suite
+
+**iOS:**
+- `sh.vibetunnel.ios` - iOS keychain service and URL scheme
+
+### Viewing Unredacted Logs
+
+To see full log details for debugging, you have several options:
+
+1. **Install the Configuration Profile** (Recommended - easiest method):
+   ```bash
+   # Install the logging configuration profile
+   open apple/logging/VibeTunnel-Logging.mobileconfig
+   
+   # This enables debug logging for all VibeTunnel components
+   # To remove later: System Settings → Privacy & Security → Profiles
+   ```
+
+2. **Use the vtlog script** (convenient log viewer):
+   ```bash
+   # View recent logs (requires configuration profile or sudo)
+   ./scripts/vtlog.sh
+   
+   # Follow logs in real-time
+   ./scripts/vtlog.sh -f
+   
+   # Show only errors
+   ./scripts/vtlog.sh -e
+   
+   # Filter by category
+   ./scripts/vtlog.sh -c ServerManager
+   ```
+
+3. **Configure passwordless sudo** (alternative for vtlog with -p flag):
+   ```bash
+   # Add to sudoers (replace 'yourusername' with your actual username)
+   sudo visudo
+   # Add this line:
+   yourusername ALL=(ALL) NOPASSWD: /usr/bin/log
+   
+   # Then use vtlog with private flag
+   ./scripts/vtlog.sh -p
+   ```
+
+4. **Enable private data logging** using a plist file (alternative):
+   ```bash
+   # Create the plist to enable private data for VibeTunnel
+   sudo mkdir -p /Library/Preferences/Logging/Subsystems
+   sudo tee /Library/Preferences/Logging/Subsystems/sh.vibetunnel.vibetunnel.plist > /dev/null << 'EOF'
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0">
+   <dict>
+       <key>Enable-Private-Data</key>
+       <true/>
+   </dict>
+   </plist>
+   EOF
+   ```
+
+### Why Logs Show `<private>`
+
+Apple redacts dynamic values in logs by default to protect user privacy. This prevents accidental logging of passwords, tokens, or personal information. Our configuration profile or the methods above enable full visibility for development and debugging.
+
+For more detailed information about logging privacy and additional methods, see [apple/docs/logging-private-fix.md](apple/docs/logging-private-fix.md).
+
 ## Contributing
 
 We welcome contributions! VibeTunnel is a community-driven project and we'd love to have you join us.

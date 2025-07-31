@@ -23,7 +23,7 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
     private var isConnected = false
     private var recentlyNotifiedSessions = Set<String>()
     private var notificationCleanupTimer: Timer?
-    
+
     /// Public property to check SSE connection status
     var isSSEConnected: Bool { isConnected }
 
@@ -119,7 +119,6 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
         // Debug: Log current delegate to verify it's set
         let currentDelegate = UNUserNotificationCenter.current().delegate
         logger.info("🔍 Current UNUserNotificationCenter delegate: \(String(describing: currentDelegate))")
-        
         // Check if notifications are enabled in config
         guard let configProvider = configProvider, configProvider.notificationsEnabled else {
             logger.info("📴 Notifications are disabled in config, skipping SSE connection")
@@ -139,18 +138,18 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
             waitForUnixSocketAndConnect()
         }
     }
-    
+
     /// Wait for Unix socket ready notification then connect
     private func waitForUnixSocketAndConnect() {
         logger.info("⏳ Waiting for Unix socket ready notification...")
-        
+
         // Check if Unix socket is already connected
         if SharedUnixSocketManager.shared.isConnected {
             logger.info("✅ Unix socket already connected, connecting to SSE immediately")
             connect()
             return
         }
-        
+
         // Listen for Unix socket ready notification
         NotificationCenter.default.addObserver(
             forName: SharedUnixSocketManager.unixSocketReadyNotification,
@@ -160,7 +159,7 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
             Task { @MainActor [weak self] in
                 self?.logger.info("✅ Unix socket ready notification received, connecting to SSE")
                 self?.connect()
-                
+
                 // Remove observer after first notification to prevent duplicate connections
                 NotificationCenter.default.removeObserver(
                     self as Any,
@@ -507,7 +506,6 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
         // This prevents dual-path connection attempts
     }
 
-
     private func connect() {
         // Using interpolation to bypass privacy restrictions for debugging
         logger.info("🔌 NotificationService.connect() called - isConnected: \(self.isConnected, privacy: .public)")
@@ -531,7 +529,6 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
         let eventsURL = "http://localhost:\(serverProvider.port)/api/events"
         // Show full URL for debugging SSE connection issues
         logger.info("📡 Attempting to connect to SSE endpoint: \(eventsURL, privacy: .public)")
-        
         guard let url = URL(string: eventsURL) else {
             logger.error("Invalid events URL: \(eventsURL)")
             return
@@ -603,9 +600,9 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
     }
 
     private func handleEvent(_ event: Event) async {
-        guard let data = event.data else { 
+        guard let data = event.data else {
             logger.warning("Received event with no data")
-            return 
+            return
         }
 
         // Log event details for debugging
@@ -822,25 +819,24 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
     private func handleTestNotification(_ json: [String: Any]) {
         // Debug: Show full test notification data
         logger.info("🧪 Handling test notification from server - JSON: \(json, privacy: .public)")
-        
         let title = json["title"] as? String ?? "VibeTunnel Test"
         let body = json["body"] as? String ?? "Server-side notifications are working correctly!"
         let message = json["message"] as? String
-        
+
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        if let message = message {
+        if let message {
             content.subtitle = message
         }
         content.sound = getNotificationSound()
         content.categoryIdentifier = "TEST"
         content.userInfo = ["type": "test-notification"]
-        
+
         logger.info("📤 Delivering test notification: \(title) - \(body)")
         deliverNotification(content, identifier: "test-\(UUID().uuidString)")
     }
-    
+
     private func handleClaudeTurn(_ json: [String: Any]) {
         guard let sessionId = json["sessionId"] as? String else {
             logger.error("Claude turn event missing sessionId")
@@ -907,13 +903,12 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
         // Show thread details for debugging dispatch issues
         logger.info("🧵 Current thread: \(Thread.current, privacy: .public)")
         logger.info("🧵 Is main thread: \(Thread.isMainThread, privacy: .public)")
-        
         // Check if server is running
         guard serverProvider?.isRunning ?? false else {
             logger.error("❌ Cannot send test notification - server is not running")
             return
         }
-        
+
         // If not connected to SSE, try to connect first
         if !isConnected {
             logger.warning("⚠️ Not connected to SSE endpoint, attempting to connect...")
@@ -921,7 +916,7 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
             // Give it a moment to connect
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
         }
-        
+
         // Log server info
         logger.info("Server info - Port: \(self.serverProvider?.port ?? "unknown"), Running: \(self.serverProvider?.isRunning ?? false), SSE Connected: \(self.isConnected)")
         
@@ -932,24 +927,22 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
         
         // Show full URL for debugging test notification endpoint
         logger.info("📤 Sending POST request to: \(url, privacy: .public)")
-        
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         // Add auth token if available
         if let authToken = serverProvider?.localAuthToken {
             request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
             logger.debug("Added auth token to request")
         }
-        
+
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            
+
             if let httpResponse = response as? HTTPURLResponse {
                 // Show HTTP status code for debugging
                 logger.info("📥 Received response - Status: \(httpResponse.statusCode, privacy: .public)")
-                
                 if httpResponse.statusCode == 200 {
                     logger.info("✅ Server test notification sent successfully")
                     if let responseData = String(data: data, encoding: .utf8) {
@@ -1000,4 +993,3 @@ final class NotificationService: NSObject, @preconcurrency UNUserNotificationCen
         completionHandler()
     }
 }
-
