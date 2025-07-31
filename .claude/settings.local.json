@@ -4,7 +4,13 @@
       "Bash(pnpm test:*)",
       "Bash(rg:*)",
       "Bash(./scripts/vtlog.sh:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(vt title:*)",
+      "Bash(git pull:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(pnpm run check:*)"
     ],
     "deny": []
   },

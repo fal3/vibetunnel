@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VibeTunnel Notification Test</title>
+    <meta charset="utf-8">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        .status {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        .good { color: #4ade80; }
+        .bad { color: #f87171; }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+    </style>
+</head>
+<body>
+    <h1>VibeTunnel Notification Test</h1>
+    
+    <div class="status">
+        <h3>Environment Check:</h3>
+        <p>Current URL: <span id="url"></span></p>
+        <p>Secure Context: <span id="secure" class="bad">❌ No</span></p>
+        <p>Service Workers: <span id="sw" class="bad">❌ Not Supported</span></p>
+        <p>Push API: <span id="push" class="bad">❌ Not Supported</span></p>
+        <p>Notifications: <span id="notif" class="bad">❌ Not Supported</span></p>
+    </div>
+
+    <div class="status">
+        <h3>Quick Access URLs:</h3>
+        <p><a href="http://localhost:4020" style="color: #3b82f6">http://localhost:4020</a> ✅ Secure</p>
+        <p><a href="http://127.0.0.1:4020" style="color: #3b82f6">http://127.0.0.1:4020</a> ✅ Secure</p>
+    </div>
+
+    <div>
+        <h3>Test Actions:</h3>
+        <button onclick="requestPermission()">Request Permission</button>
+        <button onclick="showTestNotification()">Show Test Notification</button>
+    </div>
+
+    <script>
+        // Check environment
+        document.getElementById('url').textContent = window.location.href;
+        
+        if (window.isSecureContext) {
+            document.getElementById('secure').className = 'good';
+            document.getElementById('secure').textContent = '✅ Yes';
+        }
+        
+        if ('serviceWorker' in navigator) {
+            document.getElementById('sw').className = 'good';
+            document.getElementById('sw').textContent = '✅ Supported';
+        }
+        
+        if ('PushManager' in window) {
+            document.getElementById('push').className = 'good';
+            document.getElementById('push').textContent = '✅ Supported';
+        }
+        
+        if ('Notification' in window) {
+            document.getElementById('notif').className = 'good';
+            document.getElementById('notif').textContent = '✅ Supported (' + Notification.permission + ')';
+        }
+
+        function requestPermission() {
+            if ('Notification' in window) {
+                Notification.requestPermission().then(permission => {
+                    alert('Permission: ' + permission);
+                    location.reload();
+                });
+            } else {
+                alert('Notifications not supported!');
+            }
+        }
+
+        function showTestNotification() {
+            if (!window.isSecureContext) {
+                alert('Notifications require a secure context!\nUse localhost or HTTPS.');
+                return;
+            }
+            
+            if (Notification.permission === 'granted') {
+                new Notification('VibeTunnel Test', {
+                    body: 'Notifications are working! 🎉',
+                    icon: '/apple-touch-icon.png'
+                });
+            } else {
+                alert('Please grant notification permission first!');
+            }
+        }
+    </script>
+</body>
+</html>
