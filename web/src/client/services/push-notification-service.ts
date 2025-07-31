@@ -68,6 +68,15 @@ export class PushNotificationService {
         return;
       }
 
+      // Check if we're in a secure context (HTTPS or localhost)
+      // Service workers require HTTPS except for localhost/127.0.0.1
+      if (!window.isSecureContext) {
+        logger.warn(
+          'Push notifications require HTTPS or localhost. Current context is not secure.'
+        );
+        return;
+      }
+
       // Fetch VAPID public key from server
       await this.fetchVapidPublicKey();
 
@@ -176,8 +185,7 @@ export class PushNotificationService {
    */
   private async autoResubscribe(): Promise<void> {
     try {
-      // Wait for initialization to complete first
-      await this.waitForInitialization();
+      // Don't wait for initialization here - we're already in the initialization process!
 
       // Load saved preferences
       const preferences = await this.loadPreferences();

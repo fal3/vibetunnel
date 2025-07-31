@@ -594,10 +594,16 @@ export class Settings extends LitElement {
                     : !window.isSecureContext
                       ? html`
                       <p class="text-sm text-status-warning mb-2">
-                        Push notifications require HTTPS.
+                        ⚠️ Push notifications require a secure connection
                       </p>
-                      <p class="text-xs text-status-warning opacity-80">
-                        Access VibeTunnel via https:// or use localhost/127.0.0.1 to enable notifications.
+                      <p class="text-xs text-status-warning opacity-80 mb-2">
+                        You're accessing VibeTunnel via ${window.location.protocol}//${window.location.hostname}
+                      </p>
+                      <p class="text-xs text-status-info opacity-90">
+                        To enable notifications, access VibeTunnel using:
+                        <br>• https://${window.location.hostname}${window.location.port ? `:${window.location.port}` : ''}
+                        <br>• http://localhost:${window.location.port || '4020'}
+                        <br>• http://127.0.0.1:${window.location.port || '4020'}
                       </p>
                     `
                       : html`
